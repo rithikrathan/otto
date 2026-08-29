@@ -22,7 +22,7 @@ pub fn chunks(area: Rect, prompt: &Prompt) -> [Rect; 5] {
         Constraint::Length(1),                // tabs
         Constraint::Min(1),                   // buffer area
         Constraint::Length(1),                // separator statusline
-        Constraint::Length(prompt_h + 1),     // prompt box (+1 breathing row)
+        Constraint::Length(prompt_h + 2),     // prompt box (borders + content)
         Constraint::Length(1),                // bottom statusline
     ])
     .split(area);
@@ -33,4 +33,39 @@ pub fn chunks(area: Rect, prompt: &Prompt) -> [Rect; 5] {
         rows[3], // 3 prompt
         rows[4], // 4 bottom
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::app::input::Prompt;
+
+    fn area() -> Rect {
+        Rect::new(0, 0, 100, 30)
+    }
+
+    /// An empty prompt box must be 3 rows tall so the middle row holds the
+    /// text between the top and bottom borders (border, content, border).
+    #[test]
+    fn empty_prompt_box_is_three_rows() {
+        let p = Prompt::new();
+        assert_eq!(chunks(area(), &p)[3].height, 3);
+    }
+
+    #[test]
+    fn single_line_prompt_stays_three_rows() {
+        let mut p = Prompt::new();
+        p.text = "hello".to_string();
+        assert_eq!(chunks(area(), &p)[3].height, 3);
+    }
+
+    #[test]
+    fn multi_line_prompt_grows_past_three_rows() {
+        let mut p = Prompt::new();
+        p.text = "one two three four five six seven eight nine ten eleven twelve".to_string();
+        p.width = 10; // force wrapping into multiple rows
+        let h = chunks(area(), &p)[3].height;
+        assert!(h > 3, "expected prompt to grow, got {h}");
+        assert!(h <= MAX_LINES as u16 + 2);
+    }
 }
