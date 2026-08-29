@@ -47,14 +47,18 @@ fn active_document(app: &App) -> String {
 use std::sync::OnceLock;
 
 static SYNTAX_SET: OnceLock<syntect::parsing::SyntaxSet> = OnceLock::new();
-static THEME_SET: OnceLock<syntect::highlighting::ThemeSet> = OnceLock::new();
+static EPHEMERA_THEME: OnceLock<syntect::highlighting::Theme> = OnceLock::new();
 
 fn get_syntax_set() -> &'static syntect::parsing::SyntaxSet {
     SYNTAX_SET.get_or_init(|| syntect::parsing::SyntaxSet::load_defaults_newlines())
 }
 
-fn get_theme_set() -> &'static syntect::highlighting::ThemeSet {
-    THEME_SET.get_or_init(|| syntect::highlighting::ThemeSet::load_defaults())
+fn get_ephemera_theme() -> &'static syntect::highlighting::Theme {
+    EPHEMERA_THEME.get_or_init(|| {
+        let xml = include_str!("../ephemera.tmTheme");
+        let mut cursor = std::io::Cursor::new(xml);
+        syntect::highlighting::ThemeSet::load_from_reader(&mut cursor).unwrap()
+    })
 }
 
 fn syntect_style_to_ratatui(style: syntect::highlighting::Style) -> ratatui::style::Style {
@@ -210,9 +214,9 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
                 lines.push(Line::from(Span::styled(top, theme.muted())));
 
                 let ps = get_syntax_set();
-                let ts = get_theme_set();
+                let theme = get_ephemera_theme();
                 let syntax = ps.find_syntax_by_token(&code_lang).unwrap_or_else(|| ps.find_syntax_plain_text());
-                highlighter = Some(syntect::easy::HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]));
+                highlighter = Some(syntect::easy::HighlightLines::new(syntax, theme));
             }
             continue;
         }
