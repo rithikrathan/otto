@@ -147,7 +147,7 @@ impl App {
                 self.busy.clear();
                 self.chat.finish_assistant();
                 self.chat.view.blocks.push(crate::buffers::Block {
-                    kind: "info",
+                    kind: "info".to_string(),
                     markdown: "*Aborted*".into(),
                 });
             }
@@ -172,7 +172,8 @@ impl App {
             AppEvent::ChatDelta { buffer, delta } => {
                 if buffer == BufferId::Chat {
                     if !self.chat.streaming {
-                        self.chat.begin_assistant();
+                        let m = self.model_name.clone();
+                        self.chat.begin_assistant(&m);
                     }
                     self.chat.push_assistant(&delta);
                 }
@@ -187,7 +188,7 @@ impl App {
                 if buffer == BufferId::Chat {
                     self.chat.finish_assistant();
                     self.chat.view.blocks.push(crate::buffers::Block {
-                        kind: "error",
+                        kind: "error".to_string(),
                         markdown: format!("*{msg}*"),
                     });
                 }
@@ -210,7 +211,7 @@ impl App {
             }
             AppEvent::SearchError { msg } => {
                 self.search.view.blocks.push(crate::buffers::Block {
-                    kind: "error",
+                    kind: "error".to_string(),
                     markdown: format!("*{msg}*"),
                 });
                 self.remove_job(JobKind::SearchFetch);
@@ -224,7 +225,7 @@ impl App {
             }
             AppEvent::ChtshError { msg } => {
                 self.chtsh.view.blocks.push(crate::buffers::Block {
-                    kind: "error",
+                    kind: "error".to_string(),
                     markdown: format!("*{msg}*"),
                 });
                 self.remove_job(JobKind::ChtshFetch);
@@ -239,7 +240,7 @@ impl App {
             AppEvent::SttError { msg } => {
                 self.busy.retain(|j| *j != JobKind::Stt);
                 self.chat.view.blocks.push(crate::buffers::Block {
-                    kind: "error",
+                    kind: "error".to_string(),
                     markdown: format!("*stt: {msg}*"),
                 });
             }

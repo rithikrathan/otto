@@ -12,8 +12,8 @@ impl ChtshBuffer {
     pub fn add_result(&mut self, query: &str, text: &str) -> Block {
         // TODO(stub): render cht.sh output as a block.
         Block {
-            kind: "cht.sh",
-            markdown: format!("**cht.sh » {}**\n\n```\n{}\n```", query, text),
+            kind: "cht.sh".to_string(),
+            markdown: format!("**cht.sh/{}**\n\n```sh\n{}\n```", query, text),
         }
     }
 

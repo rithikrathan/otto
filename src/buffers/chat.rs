@@ -23,7 +23,7 @@ impl ChatBuffer {
     /// Append the user's prompt as a block + history entry and return its block.
     pub fn add_user(&mut self, text: &str) -> Block {
         let block = Block {
-            kind: "you",
+            kind: "you".to_string(),
             markdown: text.to_string(),
         };
         self.view.blocks.push(block.clone());
@@ -31,9 +31,9 @@ impl ChatBuffer {
     }
 
     /// Start a new assistant block that will stream in.
-    pub fn begin_assistant(&mut self) {
+    pub fn begin_assistant(&mut self, model: &str) {
         self.view.blocks.push(Block {
-            kind: "ollama",
+            kind: model.to_string(),
             markdown: String::new(),
         });
         self.streaming = true;
@@ -42,7 +42,7 @@ impl ChatBuffer {
     /// Append a delta to the currently-streaming assistant block.
     pub fn push_assistant(&mut self, delta: &str) {
         if let Some(block) = self.view.blocks.last_mut() {
-            if block.kind == "ollama" {
+            if self.streaming {
                 block.markdown.push_str(delta);
             }
         }

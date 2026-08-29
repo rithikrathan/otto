@@ -40,7 +40,7 @@ pub struct BufferState {
 #[derive(Debug, Clone)]
 pub struct Block {
     /// Role/kind header, e.g. "you", "ollama", "search", "cht.sh".
-    pub kind: &'static str,
+    pub kind: String,
     /// Raw markdown content.
     pub markdown: String,
 }

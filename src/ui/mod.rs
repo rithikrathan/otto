@@ -78,15 +78,19 @@ fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Them
         left.push(Span::styled(" · ", theme.muted()));
     }
 
-    let right = vec![
-        Span::styled(model, theme.muted()),
-        Span::styled(" · ", theme.muted()),
+    let mut right = Vec::new();
+    if area.width > 60 {
+        right.push(Span::styled(model, theme.muted()));
+        right.push(Span::styled(" · ", theme.muted()));
+    }
+    
+    right.extend(vec![
         Span::raw(format!("in {}", r)),
         Span::styled(" · ", theme.muted()),
         Span::raw(format!("out {}", w)),
         Span::styled(" · ", theme.muted()),
         Span::styled(format!("ctx {}", ctx), theme.muted()),
-    ];
+    ]);
 
     // Right-align the stats block at the end of the statusline.
     let mut line = Line::from(left);

@@ -14,7 +14,7 @@ impl SearchBuffer {
     pub fn add_result(&mut self, query: &str, markdown: &str) -> Block {
         // TODO(stub): model's last_query and append a block.
         Block {
-            kind: "search",
+            kind: "search".to_string(),
             markdown: format!("**Search » {}**\n\n{}", query, markdown),
         }
     }

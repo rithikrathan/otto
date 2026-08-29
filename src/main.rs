@@ -188,7 +188,7 @@ fn handle_key(
             // Ctrl+M toggles speech-to-text (requires the `stt` feature + libvosk).
             if !stt::ENABLED {
                 app.chat.view.blocks.push(crate::buffers::Block {
-                    kind: "info",
+                    kind: "info".to_string(),
                     markdown: "STT not compiled (build with `--features stt` and install libvosk)."
                         .into(),
                 });
