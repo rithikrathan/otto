@@ -20,7 +20,7 @@ impl Theme {
         if self.mono {
             Style::default()
         } else {
-            Style::default().fg(Color::Gray)
+            Style::default().fg(Color::Rgb(221, 204, 204)) // fg: #ddcccc
         }
     }
 
@@ -34,7 +34,7 @@ impl Theme {
         if self.mono {
             Style::default().add_modifier(Modifier::DIM)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(Color::Rgb(105, 105, 105)) // comment: #696969
         }
     }
 
@@ -43,7 +43,7 @@ impl Theme {
         if self.mono {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(Color::Rgb(255, 37, 37)) // kw: #ff2525
         }
     }
 
@@ -52,7 +52,8 @@ impl Theme {
         if self.mono {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
-            Style::default().bg(Color::DarkGray).fg(Color::White)
+            // pmenu_bg: #17171d, pmenu_fg: #fc6142
+            Style::default().bg(Color::Rgb(23, 23, 29)).fg(Color::Rgb(252, 97, 66))
         }
     }
 
@@ -61,7 +62,7 @@ impl Theme {
         if self.mono {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Green)
+            Style::default().fg(Color::Rgb(255, 170, 0)) // search_highlight: #ffaa00
         }
     }
 
@@ -70,7 +71,8 @@ impl Theme {
         if self.mono {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
-            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+            // bufferline_selection: #fd1b1b
+            Style::default().bg(Color::Rgb(253, 27, 27)).fg(Color::Black).add_modifier(Modifier::BOLD)
         }
     }
 
@@ -80,7 +82,7 @@ impl Theme {
         if self.mono {
             Style::default().add_modifier(Modifier::REVERSED)
         } else {
-            Style::default().fg(Color::Cyan)
+            Style::default().fg(Color::Rgb(228, 178, 171)) // string: #e4b2ab
         }
     }
 

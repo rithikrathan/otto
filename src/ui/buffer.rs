@@ -107,13 +107,67 @@ fn tokenize_markdown_line<'a>(text: &str, theme: &theme::Theme) -> Vec<ratatui::
     spans
 }
 
+fn wrap_spans<'a>(
+    regions: Vec<(syntect::highlighting::Style, &str)>,
+    max_width: usize,
+    theme: &theme::Theme,
+) -> Vec<ratatui::text::Line<'a>> {
+    use ratatui::text::{Line, Span};
+    let mut lines = Vec::new();
+    let prefix = "│ ";
+    let wrap_width = max_width.saturating_sub(prefix.chars().count());
+    if wrap_width == 0 {
+        return lines;
+    }
+
+    let mut current_line = vec![Span::styled(prefix, theme.muted())];
+    let mut current_len = 0;
+
+    for (style, text) in regions {
+        let ratatui_style = syntect_style_to_ratatui(style);
+        let mut text_remain = text;
+
+        while !text_remain.is_empty() {
+            let space_left = wrap_width.saturating_sub(current_len);
+            if space_left == 0 {
+                lines.push(Line::from(current_line));
+                current_line = vec![Span::styled(prefix, theme.muted())];
+                current_len = 0;
+                continue;
+            }
+
+            let mut char_count = 0;
+            let mut split_idx = text_remain.len();
+            for (i, c) in text_remain.char_indices() {
+                if char_count == space_left {
+                    split_idx = i;
+                    break;
+                }
+                char_count += 1;
+            }
+
+            let chunk = &text_remain[..split_idx];
+            current_line.push(Span::styled(chunk.to_string(), ratatui_style));
+            current_len += char_count;
+            text_remain = &text_remain[split_idx..];
+        }
+    }
+
+    if current_len > 0 {
+        lines.push(Line::from(current_line));
+    } else if lines.is_empty() {
+        lines.push(Line::from(vec![Span::styled(prefix, theme.muted())]));
+    }
+
+    lines
+}
+
 fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui::text::Text<'a> {
     use ratatui::text::{Line, Span};
     let mut lines = Vec::new();
     let mut in_code_block = false;
 
     let width_usize = width as usize;
-    let code_bg = ratatui::style::Color::Rgb(30, 30, 30);
     let mut highlighter: Option<syntect::easy::HighlightLines> = None;
 
     for line in doc.lines() {
@@ -150,20 +204,14 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
             
             if let Some(ref mut hl) = highlighter {
                 if let Ok(regions) = hl.highlight_line(&text, get_syntax_set()) {
-                    let mut spans = Vec::new();
-                    spans.push(Span::styled("│ ", theme.muted()));
-                    for (style, substring) in regions {
-                        let ratatui_style = syntect_style_to_ratatui(style);
-                        spans.push(Span::styled(substring.to_string(), ratatui_style));
-                    }
-                    lines.push(Line::from(spans));
+                    lines.extend(wrap_spans(regions, width_usize, theme));
                     continue;
                 }
             }
-            lines.push(Line::from(vec![
-                Span::styled("│ ", theme.muted()),
-                Span::styled(text, theme.markdown_code()),
-            ]));
+            
+            // Fallback if highlight fails
+            let regions = vec![(syntect::highlighting::Style::default(), text.as_str())];
+            lines.extend(wrap_spans(regions, width_usize, theme));
             continue;
         }
 
