@@ -92,7 +92,7 @@ impl Default for Server {
 impl Default for Model {
     fn default() -> Self {
         Self {
-            name: "llama3.2".to_string(),
+            name: "qwen2.5-coder-1.5b:latest".to_string(),
         }
     }
 }

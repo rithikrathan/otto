@@ -69,7 +69,7 @@ fn tokenize_markdown_line<'a>(text: &str, theme: &theme::Theme) -> Vec<ratatui::
                 }
                 bold_text.push(ic);
             }
-            spans.push(Span::styled(bold_text, theme.emphasis()));
+            spans.push(Span::styled(bold_text, theme.emphasis().fg(ratatui::style::Color::Rgb(255, 158, 100))));
         } else if c == '`' {
             if !current.is_empty() {
                 spans.push(Span::raw(current.clone()));
@@ -149,15 +149,15 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
 
         if trimmed.starts_with("# ") {
             let header = trimmed.strip_prefix("# ").unwrap_or("").to_string();
-            lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::Cyan))));
+            lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::Rgb(255, 30, 0)))));
             continue;
         } else if trimmed.starts_with("## ") {
             let header = trimmed.strip_prefix("## ").unwrap_or("").to_string();
-            lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::LightCyan))));
+            lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::Rgb(255, 66, 15)))));
             continue;
         } else if trimmed.starts_with("### ") {
             let header = trimmed.strip_prefix("### ").unwrap_or("").to_string();
-            lines.push(Line::from(Span::styled(header, theme.emphasis())));
+            lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::Rgb(255, 99, 71)))));
             continue;
         }
 
