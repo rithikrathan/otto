@@ -1,0 +1,33 @@
+[package]
+name = "otc"
+version = "0.1.0"
+edition = "2021"
+description = "Ollama TUI chat with web search, cht.sh, and speech-to-text"
+
+[dependencies]
+ratatui = "0.30"
+tui-markdown = "0.3.9"
+crossterm = { version = "0.28", features = ["event-stream"] }
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time"] }
+reqwest = { version = "0.13", features = ["json", "stream"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+futures-util = "0.3"
+anyhow = "1"
+dirs = "6"
+toml = "0.8"
+
+[features]
+default = []
+# Enables speech-to-text (VOSK + cpal). Requires the system `libvosk`
+# dynamic library to be installed for linking. Off by default so the core
+# builds without it.
+stt = ["dep:cpal", "dep:vosk"]
+
+[dependencies.cpal]
+version = "0.15"
+optional = true
+
+[dependencies.vosk]
+version = "0.3.1"
+optional = true

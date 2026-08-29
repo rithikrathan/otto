@@ -1,0 +1,95 @@
+//! Event model: typed messages from background tasks, plus the input stream.
+//!
+//! The UI runs on the main thread; crossterm input and Tokio background tasks
+//! all feed into a single channel drained by the main loop.
+
+use crate::buffers::BufferId;
+
+/// Every message the app consumes in its event loop.
+#[derive(Debug, Clone)]
+pub enum AppEvent {
+    /// Raw terminal/keyboard input.
+    Input(crossterm::event::KeyEvent),
+    /// Periodic tick (drives the spinner animation).
+    Tick,
+
+    /// Streaming chat token appended to a buffer.
+    ChatDelta {
+        buffer: BufferId,
+        delta: String,
+    },
+    /// Assistant streaming finished.
+    ChatDone {
+        buffer: BufferId,
+    },
+    ChatError {
+        buffer: BufferId,
+        msg: String,
+    },
+
+    /// Token accounting updated mid-stream (reading + writing + context %).
+    TokenStat {
+        /// Tokens sent to the model (reading) so far in this conversation.
+        prompt_tokens: u64,
+        /// Tokens generated (writing) so far in this conversation.
+        eval_tokens: u64,
+    },
+
+    /// Search query plan produced by the model.
+    SearchPlan {
+        query: Vec<String>,
+        provider: String,
+    },
+    /// Search results fetched and summarized as markdown.
+    SearchDone {
+        markdown: String,
+    },
+    SearchError {
+        msg: String,
+    },
+
+    /// cht.sh URL plan produced by the model.
+    ChtshPlan {
+        topic: String,
+        query: String,
+    },
+    ChtshDone {
+        text: String,
+    },
+    ChtshError {
+        msg: String,
+    },
+
+    /// Model list from `/api/tags`.
+    ModelsLoaded(Vec<String>),
+
+    /// Speech-to-text partial result while recording.
+    SttPartial {
+        text: String,
+    },
+    /// Speech-to-text final result, ready to insert into the prompt.
+    SttFinal {
+        text: String,
+    },
+    SttError {
+        msg: String,
+    },
+
+    /// Add/remove a busy-job marker (drives the spinner).
+    MarkBusy {
+        job: crate::app::JobKind,
+        on: bool,
+    },
+}
+
+/// Channel type used for UI events.
+pub type EventSender = tokio::sync::mpsc::UnboundedSender<AppEvent>;
+pub type EventReceiver = tokio::sync::mpsc::UnboundedReceiver<AppEvent>;
+
+/// Create the app event channel.
+pub fn channel() -> (EventSender, EventReceiver) {
+    tokio::sync::mpsc::unbounded_channel()
+}
+
+/// Task-local alias so background workers can push typed results.
+pub type JobTx = EventSender;

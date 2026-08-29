@@ -50,3 +50,6 @@ Thumbs.db
 *.config.local
 /private/
 
+
+# Rust
+/target/
