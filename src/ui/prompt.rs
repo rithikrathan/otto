@@ -72,10 +72,19 @@ pub fn draw(frame: &mut Frame, prompt: &mut Prompt, area: Rect, theme: &Theme) {
 
     frame.render_widget(paragraph, area);
 
-    // Draw the cursor onto the caret position.
+    // Draw the cursor manually using a reversed block to prevent hardware cursor flicker.
     let x = area.x + 2 + cursor_col as u16; // 1 for border, 1 for padding
     let y = area.y + 1 + cursor_row.saturating_sub(prompt.scroll) as u16;
     if x < area.x + area.width && y < area.y + area.height {
-        frame.set_cursor_position((x, y));
+        if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
+            let symbol = cell.symbol();
+            if symbol == " " || symbol.is_empty() {
+                cell.set_symbol("█");
+                // match the muted theme color or just default
+                cell.set_fg(theme.muted().fg.unwrap_or(ratatui::style::Color::DarkGray));
+            } else {
+                cell.set_style(cell.style().add_modifier(ratatui::style::Modifier::REVERSED));
+            }
+        }
     }
 }
