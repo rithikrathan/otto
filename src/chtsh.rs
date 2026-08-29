@@ -39,7 +39,11 @@ pub fn build_url(plan: &ChtshPlan) -> String {
 
 /// Fetch the cheatsheet text for a query and return the raw body.
 pub async fn fetch(url: &str) -> anyhow::Result<String> {
-    let resp = reqwest::Client::new().get(url).send().await?;
+    let resp = reqwest::Client::new()
+        .get(url)
+        .header("User-Agent", "curl/8.5.0")
+        .send()
+        .await?;
     let status = resp.status();
     if !status.is_success() {
         anyhow::bail!("cht.sh returned {} for {url}", status);

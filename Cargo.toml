@@ -16,7 +16,6 @@ futures-util = "0.3"
 anyhow = "1"
 dirs = "6"
 toml = "0.8"
-tui-markdown = "0.3.9"
 
 [features]
 default = []

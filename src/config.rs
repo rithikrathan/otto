@@ -53,7 +53,7 @@ impl Default for Config {
                 model_path: "~/.local/share/otto/vosk-model-small-en-us".to_string(),
             },
             search: Search {
-                provider: "duckduckgo".to_string(),
+                provider: "google".to_string(),
                 summarize: true,
             },
         }
