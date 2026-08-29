@@ -38,7 +38,7 @@ fn main() -> Result<()> {
     let mut term = Terminal::new(CrosstermBackend::new(io::stdout())).context("create terminal")?;
     crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
     crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
-    crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
+
 
     let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -48,7 +48,7 @@ fn main() -> Result<()> {
 
     crossterm::execute!(io::stdout(), crossterm::cursor::Show)?;
     crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
-    crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture)?;
+
     crossterm::terminal::disable_raw_mode().ok();
 
     result
