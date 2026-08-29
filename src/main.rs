@@ -32,6 +32,7 @@ fn main() -> Result<()> {
     let mut term = Terminal::new(CrosstermBackend::new(io::stdout())).context("create terminal")?;
     crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
     crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
+    crossterm::execute!(io::stdout(), crossterm::event::EnableMouseCapture)?;
 
     let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -41,6 +42,7 @@ fn main() -> Result<()> {
 
     crossterm::execute!(io::stdout(), crossterm::cursor::Show)?;
     crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+    crossterm::execute!(io::stdout(), crossterm::event::DisableMouseCapture)?;
     crossterm::terminal::disable_raw_mode().ok();
 
     result
@@ -78,14 +80,26 @@ async fn run(
         }
     });
 
-    // Input reader streams key events into the same channel.
+    // Input reader streams key + mouse events into the same channel.
     let tx3 = tx.clone();
     tokio::spawn(async move {
         use futures_util::StreamExt;
         let mut events = crossterm::event::EventStream::new();
         while let Some(Ok(ev)) = events.next().await {
-            if let crossterm::event::Event::Key(key) = ev {
-                let _ = tx3.send(AppEvent::Input(key));
+            match ev {
+                crossterm::event::Event::Key(key) => {
+                    let _ = tx3.send(AppEvent::Input(key));
+                }
+                crossterm::event::Event::Mouse(m) => match m.kind {
+                    crossterm::event::MouseEventKind::ScrollUp => {
+                        let _ = tx3.send(AppEvent::MouseScroll { delta: -3 });
+                    }
+                    crossterm::event::MouseEventKind::ScrollDown => {
+                        let _ = tx3.send(AppEvent::MouseScroll { delta: 3 });
+                    }
+                    _ => {}
+                },
+                _ => {}
             }
         }
     });

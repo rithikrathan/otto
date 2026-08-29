@@ -10,6 +10,10 @@ use crate::buffers::BufferId;
 pub enum AppEvent {
     /// Raw terminal/keyboard input.
     Input(crossterm::event::KeyEvent),
+    /// Mouse wheel scroll delta (positive = down). Scrolls the active buffer.
+    MouseScroll {
+        delta: i32,
+    },
     /// Periodic tick (drives the spinner animation).
     Tick,
 

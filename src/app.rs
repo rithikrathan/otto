@@ -99,6 +99,15 @@ impl App {
         match event {
             AppEvent::Tick => {}
             AppEvent::Input(_) => {}
+            AppEvent::MouseScroll { delta } => {
+                let view = match self.active_buffer() {
+                    BufferId::Chat => &mut self.chat.view,
+                    BufferId::Search => &mut self.search.view,
+                    BufferId::Chtsh => &mut self.chtsh.view,
+                    BufferId::Manage => &mut self.manage.view,
+                };
+                view.scroll = (view.scroll as i32 + delta).max(0) as usize;
+            }
             AppEvent::TokenStat { prompt_tokens, eval_tokens } => {
                 // Ollama streams report per-request counts on the done chunk;
                 // accumulate into the running totals.
@@ -299,6 +308,21 @@ mod tests {
         app.prev_buffer();
         assert_eq!(app.active_buffer(), BufferId::Manage); // wraps back
     }
+
+    #[test]
+    fn mouse_scroll_only_moves_active_buffer_and_stays_positive() {
+        let mut app = App::new();
+        assert_eq!(app.active_buffer(), BufferId::Chat);
+        app.chat.view.scroll = 0;
+        app.handle_event(AppEvent::MouseScroll { delta: -5 });
+        assert_eq!(app.chat.view.scroll, 0); // clamped at zero
+        app.handle_event(AppEvent::MouseScroll { delta: 3 });
+        assert_eq!(app.chat.view.scroll, 3);
+        app.next_buffer(); // Search
+        app.handle_event(AppEvent::MouseScroll { delta: 2 });
+        assert_eq!(app.search.view.scroll, 2);
+        assert_eq!(app.chat.view.scroll, 3); // chat untouched
+    }
 }
 
 pub mod input {
@@ -443,6 +467,8 @@ pub mod input {
             if text.is_empty() {
                 return 1;
             }
+            // Guard against a zero width (no layout yet); avoid divide-by-zero.
+            let width = width.max(1);
             let mut rows = 0usize;
             for line in text.split('\n') {
                 if line.is_empty() {
