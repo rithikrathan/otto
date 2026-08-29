@@ -30,6 +30,24 @@ fn active_document(app: &App) -> String {
     doc
 }
 
+use std::sync::OnceLock;
+
+static SYNTAX_SET: OnceLock<syntect::parsing::SyntaxSet> = OnceLock::new();
+static THEME_SET: OnceLock<syntect::highlighting::ThemeSet> = OnceLock::new();
+
+fn get_syntax_set() -> &'static syntect::parsing::SyntaxSet {
+    SYNTAX_SET.get_or_init(|| syntect::parsing::SyntaxSet::load_defaults_newlines())
+}
+
+fn get_theme_set() -> &'static syntect::highlighting::ThemeSet {
+    THEME_SET.get_or_init(|| syntect::highlighting::ThemeSet::load_defaults())
+}
+
+fn syntect_style_to_ratatui(style: syntect::highlighting::Style) -> ratatui::style::Style {
+    ratatui::style::Style::default()
+        .fg(ratatui::style::Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b))
+}
+
 fn tokenize_markdown_line<'a>(text: &str, theme: &theme::Theme) -> Vec<ratatui::text::Span<'a>> {
     use ratatui::text::Span;
     let mut spans = Vec::new();
@@ -79,44 +97,47 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
     use ratatui::text::{Line, Span};
     let mut lines = Vec::new();
     let mut in_code_block = false;
-    let mut code_lang = String::new();
 
     let width_usize = width as usize;
     let code_bg = ratatui::style::Color::Rgb(30, 30, 30);
+    let mut highlighter: Option<syntect::easy::HighlightLines> = None;
 
     for line in doc.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
             if in_code_block {
-                let mut bottom = String::from("╰");
-                bottom.push_str(&"─".repeat(width_usize.saturating_sub(1)));
-                lines.push(Line::from(Span::styled(bottom, theme.muted().bg(code_bg))));
                 in_code_block = false;
+                highlighter = None;
             } else {
                 in_code_block = true;
-                code_lang = trimmed.strip_prefix("```").unwrap_or("").trim().to_string();
-                let mut top = String::from("╭─ ");
-                if !code_lang.is_empty() {
-                    top.push_str(&code_lang);
-                    top.push_str(" ");
-                }
-                top.push_str(&"─".repeat(width_usize.saturating_sub(top.chars().count())));
-                lines.push(Line::from(Span::styled(top, theme.muted().bg(code_bg))));
+                let code_lang = trimmed.strip_prefix("```").unwrap_or("").trim().to_string();
+                let ps = get_syntax_set();
+                let ts = get_theme_set();
+                let syntax = ps.find_syntax_by_token(&code_lang).unwrap_or_else(|| ps.find_syntax_plain_text());
+                highlighter = Some(syntect::easy::HighlightLines::new(syntax, &ts.themes["base16-ocean.dark"]));
             }
             continue;
         }
 
         if in_code_block {
             let mut text = line.to_string();
-            let display_width = text.chars().count() + 2;
+            let display_width = text.chars().count();
             if display_width < width_usize {
                 text.push_str(&" ".repeat(width_usize.saturating_sub(display_width)));
             }
             
-            lines.push(Line::from(vec![
-                Span::styled("│ ", theme.muted().bg(code_bg)),
-                Span::styled(text, theme.markdown_code().bg(code_bg)),
-            ]));
+            if let Some(ref mut hl) = highlighter {
+                if let Ok(regions) = hl.highlight_line(&text, get_syntax_set()) {
+                    let mut spans = Vec::new();
+                    for (style, substring) in regions {
+                        let ratatui_style = syntect_style_to_ratatui(style).bg(code_bg);
+                        spans.push(Span::styled(substring.to_string(), ratatui_style));
+                    }
+                    lines.push(Line::from(spans));
+                    continue;
+                }
+            }
+            lines.push(Line::from(Span::styled(text, theme.markdown_code().bg(code_bg))));
             continue;
         }
 
