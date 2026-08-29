@@ -130,7 +130,10 @@ fn wrap_spans<'a>(
 
     for (style, text) in regions {
         let ratatui_style = syntect_style_to_ratatui(style);
-        let mut text_remain = text;
+        let mut text_remain = text.strip_suffix('\n').unwrap_or(text);
+        if text_remain.is_empty() {
+            continue;
+        }
 
         while !text_remain.is_empty() {
             let space_left = wrap_width.saturating_sub(current_len);
@@ -222,7 +225,8 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
         }
 
         if in_code_block {
-            let text = line.to_string();
+            let mut text = line.to_string();
+            text.push('\n'); // Provide newline so syntect terminates line comments properly!
             
             if let Some(ref mut hl) = highlighter {
                 if let Ok(regions) = hl.highlight_line(&text, get_syntax_set()) {
