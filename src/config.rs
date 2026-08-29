@@ -46,7 +46,7 @@ impl Default for Config {
                 url: "http://localhost:11434".to_string(),
             },
             model: Model {
-                name: "llama3.2".to_string(),
+                name: "qwen2.5-coder-1.5b:latest".to_string(),
             },
             stt: Stt {
                 enabled: false,

@@ -106,11 +106,23 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
         let trimmed = line.trim();
         if trimmed.starts_with("```") {
             if in_code_block {
+                let mut bottom = String::from("╰");
+                bottom.push_str(&"─".repeat(width_usize.saturating_sub(1)));
+                lines.push(Line::from(Span::styled(bottom, theme.muted())));
                 in_code_block = false;
                 highlighter = None;
             } else {
                 in_code_block = true;
                 let code_lang = trimmed.strip_prefix("```").unwrap_or("").trim().to_string();
+                
+                let mut top = String::from("╭─ ");
+                if !code_lang.is_empty() {
+                    top.push_str(&code_lang);
+                    top.push_str(" ");
+                }
+                top.push_str(&"─".repeat(width_usize.saturating_sub(top.chars().count())));
+                lines.push(Line::from(Span::styled(top, theme.muted())));
+
                 let ps = get_syntax_set();
                 let ts = get_theme_set();
                 let syntax = ps.find_syntax_by_token(&code_lang).unwrap_or_else(|| ps.find_syntax_plain_text());
@@ -120,24 +132,24 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
         }
 
         if in_code_block {
-            let mut text = line.to_string();
-            let display_width = text.chars().count();
-            if display_width < width_usize {
-                text.push_str(&" ".repeat(width_usize.saturating_sub(display_width)));
-            }
+            let text = line.to_string();
             
             if let Some(ref mut hl) = highlighter {
                 if let Ok(regions) = hl.highlight_line(&text, get_syntax_set()) {
                     let mut spans = Vec::new();
+                    spans.push(Span::styled("│ ", theme.muted()));
                     for (style, substring) in regions {
-                        let ratatui_style = syntect_style_to_ratatui(style).bg(code_bg);
+                        let ratatui_style = syntect_style_to_ratatui(style);
                         spans.push(Span::styled(substring.to_string(), ratatui_style));
                     }
                     lines.push(Line::from(spans));
                     continue;
                 }
             }
-            lines.push(Line::from(Span::styled(text, theme.markdown_code().bg(code_bg))));
+            lines.push(Line::from(vec![
+                Span::styled("│ ", theme.muted()),
+                Span::styled(text, theme.markdown_code()),
+            ]));
             continue;
         }
 
