@@ -46,6 +46,13 @@ pub enum AppEvent {
         query: Vec<String>,
         provider: String,
     },
+    SearchRefinedQuery {
+        query: String,
+    },
+    SearchExecute {
+        query: String,
+    },
+    SearchFetch,
     /// Search results fetched and summarized as markdown.
     SearchDone {
         markdown: String,

@@ -125,7 +125,12 @@ async fn run(
                     Some(AppEvent::Input(key)) => {
                         handle_key(app, key, &tx, config)?;
                     }
-                    Some(other) => app.handle_event(other),
+                    Some(other) => {
+                        if let AppEvent::SearchExecute { query } = &other {
+                            execute_search(app, query, &tx, config);
+                        }
+                        app.handle_event(other);
+                    }
                     None => break,
                 }
             }
@@ -207,7 +212,29 @@ fn handle_key(
             return Ok(());
         }
         KeyCode::Tab => {
+            if let Some(comp) = crate::cmd::autocomplete(&app.prompt.text) {
+                if app.prompt.cursor == app.prompt.text.len() {
+                    let comp_str = comp.to_string();
+                    for c in comp_str.chars() {
+                        app.prompt.insert_char(c);
+                    }
+                    return Ok(());
+                }
+            }
             app.next_buffer();
+            return Ok(());
+        }
+        KeyCode::Right => {
+            if let Some(comp) = crate::cmd::autocomplete(&app.prompt.text) {
+                if app.prompt.cursor == app.prompt.text.len() {
+                    let comp_str = comp.to_string();
+                    for c in comp_str.chars() {
+                        app.prompt.insert_char(c);
+                    }
+                    return Ok(());
+                }
+            }
+            app.prompt.move_right();
             return Ok(());
         }
         KeyCode::BackTab => {
@@ -297,7 +324,9 @@ fn handle_modal_key(
             }
             KeyCode::Enter => {
                 app.modal_search_focused = false;
-                app.modal_apply();
+                if let Some(ev) = app.modal_apply() {
+                    let _ = tx.send(ev);
+                }
             }
             KeyCode::Backspace => {
                 app.modal_search.pop();
@@ -337,8 +366,9 @@ fn handle_modal_key(
         }
         KeyCode::Enter => {
             // Applying an async job (e.g. switching models) is sync here.
-            app.modal_apply();
-            let _ = tx;
+            if let Some(ev) = app.modal_apply() {
+                let _ = tx.send(ev);
+            }
             Ok(())
         }
         _ => Ok(()),
@@ -379,6 +409,19 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &config::Config)
                 app.open_modal(app::Modal::Settings);
                 Ok(())
             }
+            cmd::Command::Help => {
+                let help_text = "### Available Commands\n\n* `/clear`: Clear chat history\n* `/model [name]`: Change model (empty to open picker)\n* `/settings`: Open settings\n* `/export <path>`: Export chat to file\n* `/google`, `/bing`, `/ddg`: Change search provider\n* `/help`: Show this help\n* `/exit`, `:q`: Quit\n\n_Tip: Use Tab or Right Arrow to autocomplete slash commands._";
+                app.chat.view.blocks.push(crate::buffers::Block {
+                    kind: "markdown".to_string(),
+                    markdown: help_text.into(),
+                });
+                app.chat.view.scroll = 9999;
+                Ok(())
+            }
+            cmd::Command::SearchProvider(provider) => {
+                app.settings.search_provider = provider;
+                Ok(())
+            }
             cmd::Command::Quit => {
                 app.running = false;
                 Ok(())
@@ -398,6 +441,13 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &config::Config)
 /// Send the prompt to the selected model and stream the reply.
 fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &config::Config) -> Result<()> {
     use crate::buffers::chat::ChatMessage;
+
+    // Clear history to start fresh as requested, and add a system prompt.
+    app.chat.history.clear();
+    app.chat.history.push(ChatMessage {
+        role: "system".into(),
+        content: "You are a highly capable AI assistant. Answer the user's questions clearly and concisely. Format your output using elegant markdown, especially for code blocks.".into(),
+    });
 
     app.chat.history.push(ChatMessage {
         role: "user".into(),
@@ -437,7 +487,7 @@ fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &config::Config
     Ok(())
 }
 
-/// Kick off a search: ask the model for a query plan, then fetch + render.
+/// Kick off a search: ask the model for a query plan, and show a picker modal.
 fn trigger_search(
     app: &mut App,
     text: &str,
@@ -445,37 +495,62 @@ fn trigger_search(
     config: &config::Config,
 ) -> Result<()> {
     app.search.last_query = Some(text.to_string());
+    app.open_modal(app::Modal::SearchQueryPicker(vec![text.to_string()]));
     app.busy.push(app::JobKind::SearchPlan);
 
     let ollama = ollama::Ollama::new(config.server.url.clone());
     let model = app.model_name.clone();
     let prompt = text.to_string();
     let tx = tx.clone();
-    let summarize = config.search.summarize;
+    
     let handle = tokio::spawn(async move {
         // Phase 1: model produces the actual search query.
         let plan = plan_search(&ollama, &model, &prompt).await;
-        let query = plan
-            .as_ref()
-            .ok()
-            .and_then(|p| p.get("query").and_then(|q| q.as_str()).map(String::from))
-            .unwrap_or_else(|| prompt.clone());
-        if let Ok(p) = plan {
-            let _ = tx.send(AppEvent::SearchPlan {
-                query: vec![query.clone()],
-                provider: p
-                    .get("provider")
-                    .and_then(|v| v.as_str().map(String::from))
-                    .unwrap_or_else(|| "duckduckgo".to_string()),
-            });
+        match plan {
+            Ok(plan_val) => {
+                let mut query = plan_val
+                    .get("query")
+                    .and_then(|q| q.as_str())
+                    .map(String::from)
+                    .unwrap_or_else(|| prompt.clone());
+                if query == prompt {
+                    query = format!("{} (AI)", query);
+                } else {
+                    query = format!("✨ {}", query);
+                }
+                let _ = tx.send(AppEvent::SearchRefinedQuery { query });
+            }
+            Err(e) => {
+                let query = format!("{} (AI Failed: {})", prompt, e);
+                let _ = tx.send(AppEvent::SearchRefinedQuery { query });
+            }
         }
         let _ = tx.send(AppEvent::MarkBusy {
-            job: app::JobKind::SearchFetch,
-            on: true,
+            job: app::JobKind::SearchPlan,
+            on: false,
         });
+    });
+    app.bg_task = Some(handle);
+    Ok(())
+}
 
+fn execute_search(
+    app: &mut App,
+    query: &str,
+    tx: &EventSender,
+    config: &config::Config,
+) {
+    app.busy.push(app::JobKind::SearchFetch);
+    let ollama = ollama::Ollama::new(config.server.url.clone());
+    let model = app.model_name.clone();
+    let summarize = config.search.summarize;
+    let provider = app.settings.search_provider.clone();
+    let tx = tx.clone();
+    let query_str = query.to_string();
+
+    let handle = tokio::spawn(async move {
         // Phase 2: run the provider query.
-        let results = search::search(&query).await;
+        let results = search::search(&provider, &query_str).await;
         let (results, err) = match results {
             Ok(r) => (r, None),
             Err(e) => (Vec::new(), Some(e.to_string())),
@@ -484,15 +559,11 @@ fn trigger_search(
         // Phase 3: summarize (optional) into concise markdown.
         let mut md = search::results_to_markdown(&results);
         if summarize && !results.is_empty() {
-            if let Ok(sum) = summarize_results(&ollama, &model, &query, &md).await {
+            if let Ok(sum) = summarize_results(&ollama, &model, &query_str, &md).await {
                 md = sum;
             }
         }
 
-        let _ = tx.send(AppEvent::MarkBusy {
-            job: app::JobKind::SearchPlan,
-            on: false,
-        });
         let _ = tx.send(AppEvent::MarkBusy {
             job: app::JobKind::SearchFetch,
             on: false,
@@ -500,11 +571,11 @@ fn trigger_search(
         if let Some(err) = err {
             let _ = tx.send(AppEvent::SearchError { msg: err });
         } else {
-            let _ = tx.send(AppEvent::SearchDone { markdown: md });
+            let final_md = format!("**Search:** `{query_str}` (Provider: {provider})\n\n{md}");
+            let _ = tx.send(AppEvent::SearchDone { markdown: final_md });
         }
     });
     app.bg_task = Some(handle);
-    Ok(())
 }
 
 /// Kick off a cht.sh query: ask the model for the URL, then fetch.
@@ -576,12 +647,25 @@ fn trigger_chtsh(
     Ok(())
 }
 
+fn clean_json(text: &str) -> String {
+    let mut s = text.trim();
+    if s.starts_with("```json") {
+        s = &s[7..];
+    } else if s.starts_with("```") {
+        s = &s[3..];
+    }
+    if s.ends_with("```") {
+        s = &s[..s.len() - 3];
+    }
+    s.trim().to_string()
+}
+
 async fn plan_search(
     ollama: &ollama::Ollama,
     model: &str,
     prompt: &str,
 ) -> Result<serde_json::Value> {
-    let sys = "You are a search-query planner. Given the user's request, produce JSON ONLY: {\"query\":\"...\"}".into();
+    let sys = "You are a search query refinement engine. Convert the user's intent into a highly optimized search query string. Do not answer the question; only produce the search query. Output JSON ONLY: {\"query\":\"...\"}".into();
     let resp = ollama
         .complete(
             model,
@@ -597,8 +681,9 @@ async fn plan_search(
             ],
         )
         .await?;
-    let out = resp.message.map(|m| m.content).unwrap_or_default();
-    Ok(serde_json::from_str(extract_json(&out)).unwrap_or(serde_json::json!({ "query": prompt })))
+    let cleaned = clean_json(&resp.message.map(|m| m.content).unwrap_or_default());
+    let json: serde_json::Value = serde_json::from_str(&cleaned)?;
+    Ok(json)
 }
 
 fn extract_json(s: &str) -> &str {
@@ -616,7 +701,7 @@ async fn plan_chtsh(
     model: &str,
     prompt: &str,
 ) -> Result<serde_json::Value> {
-    let sys = "You build cht.sh URLs. Given a request, produce JSON ONLY: {\"topic\":\"...\",\"query\":\"...\"}".into();
+    let sys = "You are a cht.sh query engine. Parse the user's intent into a `topic` (the language or tool, e.g. 'rust', 'python', 'docker') and a `query` (the question or command). Output JSON ONLY: {\"topic\":\"...\", \"query\":\"...\"}".into();
     let resp = ollama
         .complete(
             model,
@@ -632,8 +717,9 @@ async fn plan_chtsh(
             ],
         )
         .await?;
-    let out = resp.message.map(|m| m.content).unwrap_or_default();
-    Ok(serde_json::from_str(extract_json(&out)).unwrap_or(serde_json::json!({})))
+    let cleaned = clean_json(&resp.message.map(|m| m.content).unwrap_or_default());
+    let json: serde_json::Value = serde_json::from_str(&cleaned)?;
+    Ok(json)
 }
 
 /// Summarize a raw result list into a concise, procedural markdown answer.

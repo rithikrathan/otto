@@ -27,11 +27,19 @@ pub struct SearchPlan {
 /// Parses DuckDuckGo's HTML "lite" results page:
 /// - titles: `<a rel="nofollow" class="result__a" href="//.../uddg=ENCODED">Title</a>`
 /// - snippets: `<a class="result__snippet">...</a>`
-pub async fn search(query: &str) -> anyhow::Result<Vec<SearchResult>> {
+pub async fn search(provider: &str, query: &str) -> anyhow::Result<Vec<SearchResult>> {
+    match provider {
+        "google" => search_google(query).await,
+        "bing" => search_bing(query).await,
+        _ => search_ddg(query).await, // default to duckduckgo
+    }
+}
+
+async fn search_ddg(query: &str) -> anyhow::Result<Vec<SearchResult>> {
     let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
     let body = reqwest::Client::new()
         .get(&url)
-        .header("User-Agent", "Mozilla/5.0 otto/0.1")
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
         .send()
         .await?
         .error_for_status()?
@@ -39,30 +47,65 @@ pub async fn search(query: &str) -> anyhow::Result<Vec<SearchResult>> {
         .await?;
 
     let mut results = Vec::new();
-    // Split result blocks on titled anchors.
-    for block in body
-        .split("<a rel=\"nofollow\" class=\"result__a\" href=\"")
-        .skip(1)
-    {
-        let Some((href, rest)) = block.split_once('"') else {
-            continue;
-        };
-        let Some(url) = decode_link(href) else {
-            continue;
-        };
+    for block in body.split("<a rel=\"nofollow\" class=\"result__a\" href=\"").skip(1) {
+        let Some((href, rest)) = block.split_once('"') else { continue; };
+        let Some(url) = decode_link(href) else { continue; };
         let title = strip_tags(rest.split("</a>").next().unwrap_or(""));
         let snippet = extract_snippet(rest);
-        if title.is_empty() && url.is_empty() {
-            continue;
+        if title.is_empty() && url.is_empty() { continue; }
+        results.push(SearchResult { title, url, snippet });
+        if results.len() >= 8 { break; }
+    }
+    Ok(results)
+}
+
+async fn search_google(query: &str) -> anyhow::Result<Vec<SearchResult>> {
+    // Basic Google HTML fallback
+    let url = format!("https://www.google.com/search?q={}", urlencoding(query));
+    let body = reqwest::Client::new()
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let mut results = Vec::new();
+    for block in body.split("<div class=\"egMi0 kCrYT\"><a href=\"/url?q=").skip(1) {
+        let Some((href, rest)) = block.split_once("&amp;") else { continue; };
+        let url = percent_decode(href);
+        let title = rest.split("<h3").nth(1).and_then(|s| s.split(">").nth(1)).and_then(|s| s.split("</h3>").next()).map(strip_tags).unwrap_or_default();
+        let snippet = rest.split("<div class=\"BNeawe s3v9rd AP7Wnd\">").nth(1).and_then(|s| s.split("</div>").next()).map(strip_tags).unwrap_or_default();
+        if !url.is_empty() {
+            results.push(SearchResult { title, url, snippet });
         }
-        results.push(SearchResult {
-            title,
-            url,
-            snippet,
-        });
-        if results.len() >= 8 {
-            break;
-        }
+        if results.len() >= 8 { break; }
+    }
+    Ok(results)
+}
+
+async fn search_bing(query: &str) -> anyhow::Result<Vec<SearchResult>> {
+    let url = format!("https://www.bing.com/search?q={}", urlencoding(query));
+    let body = reqwest::Client::new()
+        .get(&url)
+        .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)")
+        .send()
+        .await?
+        .error_for_status()?
+        .text()
+        .await?;
+
+    let mut results = Vec::new();
+    for block in body.split("<li class=\"b_algo\">").skip(1) {
+        let title_block = block.split("<h2>").nth(1).unwrap_or("");
+        let Some((href_part, rest)) = title_block.split_once("href=\"") else { continue; };
+        let Some((url, title_rest)) = rest.split_once('"') else { continue; };
+        let title = strip_tags(title_rest.split("</a>").next().unwrap_or(""));
+        let snippet = block.split("<div class=\"b_caption\">").nth(1).and_then(|s| s.split("<p").nth(1)).and_then(|s| s.split(">").nth(1)).and_then(|s| s.split("</p>").next()).map(strip_tags).unwrap_or_default();
+        
+        results.push(SearchResult { title, url: url.to_string(), snippet });
+        if results.len() >= 8 { break; }
     }
     Ok(results)
 }
@@ -127,7 +170,20 @@ pub fn results_to_markdown(results: &[SearchResult]) -> String {
 }
 
 fn urlencoding(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join("+")
+    let mut out = String::with_capacity(s.len() * 3);
+    for c in s.chars() {
+        match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => out.push(c),
+            ' ' => out.push('+'),
+            _ => {
+                let mut buf = [0; 4];
+                for &b in c.encode_utf8(&mut buf).as_bytes() {
+                    out.push_str(&format!("%{:02X}", b));
+                }
+            }
+        }
+    }
+    out
 }
 
 fn extract_snippet(rest: &str) -> String {

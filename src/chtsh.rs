@@ -14,10 +14,27 @@ pub struct ChtshPlan {
 }
 
 /// Build a cht.sh URL from a topic + query.
+fn urlencoding(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 3);
+    for c in s.chars() {
+        match c {
+            'a'..='z' | 'A'..='Z' | '0'..='9' | '-' | '_' | '.' | '~' => out.push(c),
+            ' ' => out.push('+'),
+            _ => {
+                let mut buf = [0; 4];
+                for &b in c.encode_utf8(&mut buf).as_bytes() {
+                    out.push_str(&format!("%{:02X}", b));
+                }
+            }
+        }
+    }
+    out
+}
+
 pub fn build_url(plan: &ChtshPlan) -> String {
     let topic = plan.topic.trim().to_lowercase();
-    let joined = plan.query.split_whitespace().collect::<Vec<_>>().join("+");
-    format!("https://cht.sh/{}/{}?T", topic, joined)
+    let joined = urlencoding(&plan.query);
+    format!("https://cht.sh/{}/{}?T", urlencoding(&topic), joined)
 }
 
 /// Fetch the cheatsheet text for a query and return the raw body.

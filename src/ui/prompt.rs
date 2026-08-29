@@ -47,7 +47,17 @@ pub fn draw(frame: &mut Frame, prompt: &mut Prompt, area: Rect, theme: &Theme) {
         cursor_row = row;
         cursor_col = col;
     }
-    lines.push(Line::from(current_line));
+    
+    let mut last_spans = vec![ratatui::text::Span::raw(current_line)];
+    
+    // Ghost text for slash command autocomplete
+    if prompt.cursor == text_len {
+        if let Some(comp) = crate::cmd::autocomplete(&prompt.text) {
+            last_spans.push(ratatui::text::Span::styled(comp, theme.muted()));
+        }
+    }
+    
+    lines.push(Line::from(last_spans));
 
     let block = Block::default()
         .borders(Borders::ALL)

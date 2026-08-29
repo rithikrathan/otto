@@ -72,10 +72,11 @@ pub struct SettingsState {
 }
 
 /// A floating window layered over the main UI.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Modal {
     ModelPicker,
     Settings,
+    SearchQueryPicker(Vec<String>),
 }
 
 impl App {
@@ -260,6 +261,17 @@ impl App {
                     self.busy.retain(|j| *j != job);
                 }
             }
+            AppEvent::SearchRefinedQuery { query } => {
+                if let Some(Modal::SearchQueryPicker(opts)) = &mut self.modal {
+                    if !opts.contains(&query) {
+                        opts.push(query);
+                    }
+                }
+            }
+            AppEvent::SearchExecute { query: _ } => {
+                // Handled in main loop
+            }
+            AppEvent::SearchFetch => {}
         }
     }
 
@@ -354,9 +366,10 @@ impl App {
     }
 
     pub fn modal_move(&mut self, up: bool) {
-        let len = match self.modal {
+        let len = match &self.modal {
             Some(Modal::ModelPicker) => self.filtered_models().len(),
             Some(Modal::Settings) => settings_rows(),
+            Some(Modal::SearchQueryPicker(opts)) => opts.len(),
             None => 0,
         };
         if len == 0 {
@@ -378,9 +391,10 @@ impl App {
 
     /// Current modal selection label (for rendering/activation).
     pub fn modal_selection(&self) -> Option<String> {
-        match self.modal {
+        match &self.modal {
             Some(Modal::ModelPicker) => self.models.get(self.modal_index).cloned(),
             Some(Modal::Settings) => settings_row_label(self.modal_index).map(|s| s.to_string()),
+            Some(Modal::SearchQueryPicker(opts)) => opts.get(self.modal_index).cloned(),
             None => None,
         }
     }
@@ -388,7 +402,7 @@ impl App {
     /// Render the modal as a list of `(label, value, selected)` rows.
     pub fn modal_rows(&self) -> Vec<(String, String, bool)> {
         let mut out = Vec::new();
-        match self.modal {
+        match &self.modal {
             Some(Modal::ModelPicker) => {
                 let models = self.filtered_models();
                 for (i, m) in models.iter().enumerate() {
@@ -410,22 +424,27 @@ impl App {
                     out.push(((*label).to_string(), values[i].clone(), i == sel));
                 }
             }
+            Some(Modal::SearchQueryPicker(opts)) => {
+                for (i, opt) in opts.iter().enumerate() {
+                    out.push((opt.clone(), "".to_string(), i == self.modal_index));
+                }
+            }
             None => {}
         }
         out
     }
 
-    /// Apply the current modal selection (Enter). Returns whether it consumed.
-    pub fn modal_apply(&mut self) -> bool {
-        match self.modal {
+    /// Apply the current modal selection (Enter). Returns an optional event to dispatch.
+    pub fn modal_apply(&mut self) -> Option<AppEvent> {
+        match &self.modal {
             Some(Modal::ModelPicker) => {
                 let models = self.filtered_models();
                 if let Some(m) = models.get(self.modal_index).cloned() {
-                    self.model_name = m;
+                    self.model_name = m.clone();
                     self.settings.model = self.model_name.clone();
                 }
                 self.close_modal();
-                true
+                Some(AppEvent::Tick) // Just to trigger a redraw/consume
             }
             Some(Modal::Settings) => {
                 match settings_row_label(self.modal_index) {
@@ -441,9 +460,23 @@ impl App {
                     }
                     _ => {}
                 }
-                true
+                Some(AppEvent::Tick)
             }
-            None => false,
+            Some(Modal::SearchQueryPicker(opts)) => {
+                if let Some(q) = opts.get(self.modal_index).cloned() {
+                    self.close_modal();
+                    let clean_q = q.strip_prefix("✨ ").unwrap_or(&q)
+                        .split(" (AI")
+                        .next()
+                        .unwrap_or(&q)
+                        .trim()
+                        .to_string();
+                    return Some(AppEvent::SearchExecute { query: clean_q });
+                }
+                self.close_modal();
+                Some(AppEvent::Tick)
+            }
+            None => None,
         }
     }
 }

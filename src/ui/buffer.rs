@@ -30,49 +30,8 @@ fn active_document(app: &App) -> String {
     doc
 }
 
-fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui::text::Text<'a> {
-    use ratatui::text::{Line, Span};
-    let mut lines = Vec::new();
-    let mut in_code = false;
-
-    for line in doc.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("```") {
-            in_code = !in_code;
-            lines.push(Line::from(Span::styled(line.to_string(), theme.markdown_hr())));
-            continue;
-        }
-
-        if in_code {
-            lines.push(Line::from(Span::styled(line.to_string(), theme.markdown_code())));
-            continue;
-        }
-
-        if trimmed == "---" {
-            let hr = "─".repeat(width as usize);
-            lines.push(Line::from(Span::styled(hr, theme.markdown_hr())));
-            continue;
-        }
-
-        let mut is_bold = false;
-        let mut spans = Vec::new();
-        let mut parts = line.split("**");
-        if let Some(first) = parts.next() {
-            let is_header = first.starts_with("# ") || first.starts_with("## ") || first.starts_with("### ");
-            let base_style = if is_header { theme.emphasis() } else { theme.base() };
-            
-            spans.push(Span::styled(first.to_string(), base_style));
-            
-            for part in parts {
-                is_bold = !is_bold;
-                let style = if is_bold { theme.emphasis() } else { base_style };
-                spans.push(Span::styled(part.to_string(), style));
-            }
-        }
-        lines.push(Line::from(spans));
-    }
-    
-    ratatui::text::Text::from(lines)
+fn parse_markdown<'a>(doc: &'a str, _theme: &theme::Theme, _width: u16) -> ratatui::text::Text<'a> {
+    tui_markdown::from_str(doc)
 }
 
 /// Draw the scrollable buffer region for the active buffer.

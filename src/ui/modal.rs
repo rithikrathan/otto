@@ -12,7 +12,7 @@ use super::theme;
 
 /// Draw the active floating window (if any), centered over the main UI.
 pub fn draw(frame: &mut Frame, app: &App) {
-    let Some(modal) = app.modal else { return };
+    let Some(ref modal) = app.modal else { return };
     let theme = theme::current();
 
     let area = frame.area();
@@ -24,7 +24,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, win);
 
-    let (search_rect, list_rect) = if app.modal == Some(Modal::ModelPicker) {
+    let (search_rect, list_rect) = if matches!(app.modal, Some(Modal::ModelPicker)) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Length(3), Constraint::Min(0)])
@@ -34,9 +34,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
         (None, win)
     };
 
-    let (title, rows) = match modal {
+    let (title, rows) = match &modal {
         Modal::ModelPicker => (" model picker ", app.modal_rows()),
         Modal::Settings => (" settings ", app.modal_rows()),
+        Modal::SearchQueryPicker(_) => (" select query ", app.modal_rows()),
     };
 
     let block = Block::default()
@@ -94,9 +95,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 
     // Footer with key hints.
-    let hint = match modal {
-        Modal::ModelPicker => " ↑/↓ move   Enter apply   Esc close   . search ",
+    let hint = match &modal {
+        Modal::ModelPicker => " . search   ↑/↓ move   Enter select   Esc close ",
         Modal::Settings => " ↑/↓ move   Enter toggle/select   Esc close ",
+        Modal::SearchQueryPicker(_) => " ↑/↓ move   Enter execute search   Esc close ",
     };
     let fh = Rect::new(
         list_rect.x,
@@ -110,12 +112,10 @@ pub fn draw(frame: &mut Frame, app: &App) {
 /// Height of the modal window based on its content.
 fn modal_height(app: &App) -> u16 {
     let mut extra = 0;
-    let rows = match app.modal {
-        Some(Modal::ModelPicker) => {
-            extra = 3;
-            app.filtered_models().len()
-        }
+    let rows = match &app.modal {
+        Some(Modal::ModelPicker) => app.filtered_models().len(),
         Some(Modal::Settings) => crate::app::settings_rows(),
+        Some(Modal::SearchQueryPicker(opts)) => opts.len(),
         None => 0,
     };
     (rows as u16 + 3 + extra).clamp(6, 24)

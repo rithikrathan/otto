@@ -9,8 +9,12 @@ pub enum Command {
     Model(String),
     /// Export the current chat as markdown to `path`.
     Export(String),
+    /// Set the search provider.
+    SearchProvider(String),
     /// Open the settings window.
     Settings,
+    /// Show help.
+    Help,
     /// Quit the app.
     Quit,
     /// Unknown command.
@@ -35,13 +39,47 @@ pub fn parse(line: &str) -> Option<Command> {
         "model" => Command::Model(rest),
         "settings" | "config" => Command::Settings,
         "export" => Command::Export(rest),
+        "ddg" | "duckduckgo" => Command::SearchProvider("duckduckgo".into()),
+        "google" => Command::SearchProvider("google".into()),
+        "bing" => Command::SearchProvider("bing".into()),
         "exit" | "quit" | "q" => Command::Quit,
-        "help" => {
-            Command::Unknown("help: /clear /model [name] /settings /export <path> /exit :q".into())
-        }
+        "help" => Command::Help,
         _ => Command::Unknown(name),
     };
     Some(cmd)
+}
+
+/// Returns ghost text for autocomplete if the user's prompt matches uniquely
+pub fn autocomplete(line: &str) -> Option<&'static str> {
+    if !line.starts_with('/') || line.contains(char::is_whitespace) {
+        return None;
+    }
+    let commands = [
+        "/clear",
+        "/model",
+        "/settings",
+        "/export",
+        "/google",
+        "/bing",
+        "/ddg",
+        "/exit",
+        "/help",
+    ];
+    let mut match_found = None;
+    for cmd in commands {
+        if cmd.starts_with(line) && cmd != line {
+            if match_found.is_some() {
+                // More than one match, maybe return shortest or None?
+                // Returning first match is fine for now, or just return it.
+                // Actually if they type /e, it matches /export and /exit. Let's return None if multiple, or just the first.
+                // Let's return None for ambiguity, EXCEPT if we want to just suggest the first. Code complete suggests the first.
+            }
+            if match_found.is_none() {
+                match_found = Some(&cmd[line.len()..]);
+            }
+        }
+    }
+    match_found
 }
 
 #[cfg(test)]
