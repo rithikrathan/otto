@@ -10,7 +10,7 @@ use super::theme::Theme;
 
 /// Draw the prompt box into `area`, honoring `prompt.scroll` (first visible row).
 pub fn draw(frame: &mut Frame, prompt: &mut Prompt, area: Rect, theme: &Theme) {
-    let width = area.width.saturating_sub(2) as usize; // minus borders
+    let width = area.width.saturating_sub(4) as usize; // minus borders and horizontal padding
     if width == 0 { return; }
     prompt.width = width;
 
@@ -63,7 +63,8 @@ pub fn draw(frame: &mut Frame, prompt: &mut Prompt, area: Rect, theme: &Theme) {
         .borders(Borders::ALL)
         .title(" input ")
         .title_style(theme.muted())
-        .border_style(theme.muted());
+        .border_style(theme.muted())
+        .padding(ratatui::widgets::Padding::horizontal(1));
 
     let paragraph = Paragraph::new(lines)
         .block(block)
@@ -72,7 +73,7 @@ pub fn draw(frame: &mut Frame, prompt: &mut Prompt, area: Rect, theme: &Theme) {
     frame.render_widget(paragraph, area);
 
     // Draw the cursor onto the caret position.
-    let x = area.x + 1 + cursor_col as u16;
+    let x = area.x + 2 + cursor_col as u16; // 1 for border, 1 for padding
     let y = area.y + 1 + cursor_row.saturating_sub(prompt.scroll) as u16;
     if x < area.x + area.width && y < area.y + area.height {
         frame.set_cursor_position((x, y));

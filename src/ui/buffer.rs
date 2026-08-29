@@ -10,20 +10,34 @@ use super::theme;
 /// Assemble the active buffer's blocks into a single markdown document.
 fn active_document(app: &App) -> String {
     let mut doc = String::new();
+
+    let push_block = |doc: &mut String, prefix: Option<&str>, markdown: &str, suffix: &str| {
+        let unclosed = markdown.lines().filter(|l| l.trim().starts_with("```")).count() % 2 != 0;
+        if let Some(p) = prefix {
+            doc.push_str(p);
+        }
+        doc.push_str(markdown);
+        if unclosed {
+            doc.push_str("\n```\n");
+        }
+        doc.push_str(suffix);
+    };
+
     match app.active_buffer() {
         crate::buffers::BufferId::Chat => {
             for b in &app.chat.view.blocks {
-                doc.push_str(&format!("**{}:**\n\n{}\n\n---\n\n", b.kind, b.markdown));
+                let prefix = format!("**{}:**\n\n", b.kind);
+                push_block(&mut doc, Some(&prefix), &b.markdown, "\n\n---\n\n");
             }
         }
         crate::buffers::BufferId::Search => {
             for b in &app.search.view.blocks {
-                doc.push_str(&format!("{}\n\n---\n\n", b.markdown));
+                push_block(&mut doc, None, &b.markdown, "\n\n---\n\n");
             }
         }
         crate::buffers::BufferId::Chtsh => {
             for b in &app.chtsh.view.blocks {
-                doc.push_str(&format!("{}\n\n---\n\n", b.markdown));
+                push_block(&mut doc, None, &b.markdown, "\n\n---\n\n");
             }
         }
     }
