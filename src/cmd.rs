@@ -11,6 +11,8 @@ pub enum Command {
     Export(String),
     /// Set the search provider.
     SearchProvider(String),
+    /// Change the server endpoint URL.
+    Endpoint(String),
     /// Open the settings window.
     Settings,
     /// Show help.
@@ -37,6 +39,7 @@ pub fn parse(line: &str) -> Option<Command> {
     let cmd = match name.as_str() {
         "clear" => Command::Clear,
         "model" => Command::Model(rest),
+        "endpoint" => Command::Endpoint(rest),
         "settings" | "config" => Command::Settings,
         "export" => Command::Export(rest),
         "ddg" | "duckduckgo" => Command::SearchProvider("duckduckgo".into()),
@@ -57,6 +60,7 @@ pub fn autocomplete(line: &str) -> Option<&'static str> {
     let commands = [
         "/clear",
         "/model",
+        "/endpoint",
         "/settings",
         "/export",
         "/google",

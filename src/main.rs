@@ -22,7 +22,7 @@ use ratatui::Terminal;
 
 /// Terminal setup: enter raw mode + alternate screen, run the app, restore.
 fn main() -> Result<()> {
-    let config = config::Config::load()?;
+    let mut config = config::Config::load()?;
     let (tx, rx) = channel();
 
     let mut app = App::new();
@@ -44,7 +44,7 @@ fn main() -> Result<()> {
         .enable_all()
         .build()
         .expect("build tokio runtime")
-        .block_on(run(&mut term, &mut app, rx, &config, tx.clone()));
+        .block_on(run(&mut term, &mut app, rx, &mut config, tx.clone()));
 
     crossterm::execute!(io::stdout(), crossterm::cursor::Show)?;
     crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
@@ -59,7 +59,7 @@ async fn run(
     term: &mut Terminal<CrosstermBackend<io::Stdout>>,
     app: &mut App,
     mut rx: event::EventReceiver,
-    config: &config::Config,
+    config: &mut config::Config,
     tx: EventSender,
 ) -> Result<()> {
     use tokio::time::{interval, Duration};
@@ -144,7 +144,7 @@ fn handle_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
     tx: &EventSender,
-    config: &config::Config,
+    config: &mut config::Config,
 ) -> Result<()> {
     if key.kind != crossterm::event::KeyEventKind::Press {
         return Ok(());
@@ -315,7 +315,7 @@ fn handle_modal_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
     tx: &EventSender,
-    _config: &config::Config,
+    _config: &mut config::Config,
 ) -> Result<()> {
     if app.modal_search_focused {
         match key.code {
@@ -376,7 +376,7 @@ fn handle_modal_key(
 }
 
 /// Handle a submitted prompt: dispatch commands or the active buffer's action.
-fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &config::Config) -> Result<()> {
+fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &mut config::Config) -> Result<()> {
     // Alt+Enter (shift+enter here approximated) inserts a newline instead.
     if shift {
         app.prompt.insert_char('\n');
@@ -426,6 +426,17 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &config::Config)
                 app.running = false;
                 Ok(())
             }
+            cmd::Command::Endpoint(url) if !url.is_empty() => {
+                app.settings.server_url = url.clone();
+                config.server.url = url;
+                let _ = config.save();
+                app.chat.view.blocks.push(crate::buffers::Block {
+                    kind: "markdown".to_string(),
+                    markdown: format!("**System:** Endpoint updated to `{}`", config.server.url),
+                });
+                app.chat.view.scroll = 9999;
+                Ok(())
+            }
             cmd::Command::Export(path) if !path.is_empty() => export_chat(app, &path),
             _ => Ok(()),
         };
@@ -439,7 +450,7 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &config::Config)
 }
 
 /// Send the prompt to the selected model and stream the reply.
-fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &config::Config) -> Result<()> {
+fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &mut config::Config) -> Result<()> {
     use crate::buffers::chat::ChatMessage;
 
     // Clear history to start fresh as requested, and add a system prompt.
@@ -492,7 +503,7 @@ fn trigger_search(
     app: &mut App,
     text: &str,
     tx: &EventSender,
-    config: &config::Config,
+    config: &mut config::Config,
 ) -> Result<()> {
     app.search.last_query = Some(text.to_string());
     app.open_modal(app::Modal::SearchQueryPicker(vec![text.to_string()]));
@@ -538,7 +549,7 @@ fn execute_search(
     app: &mut App,
     query: &str,
     tx: &EventSender,
-    config: &config::Config,
+    config: &mut config::Config,
 ) {
     app.busy.push(app::JobKind::SearchFetch);
     let ollama = ollama::Ollama::new(config.server.url.clone());
@@ -583,7 +594,7 @@ fn trigger_chtsh(
     app: &mut App,
     text: &str,
     tx: &EventSender,
-    config: &config::Config,
+    config: &mut config::Config,
 ) -> Result<()> {
     app.chtsh.last_query = Some(text.to_string());
     app.busy.push(app::JobKind::ChtshPlan);
