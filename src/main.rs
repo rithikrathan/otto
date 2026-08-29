@@ -16,7 +16,7 @@ use std::io;
 use anyhow::{Context, Result};
 use app::App;
 use crossterm::event::{KeyCode, KeyModifiers};
-use event::{AppEvent, EventSender, channel};
+use event::{channel, AppEvent, EventSender};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
@@ -62,7 +62,7 @@ async fn run(
     config: &config::Config,
     tx: EventSender,
 ) -> Result<()> {
-    use tokio::time::{Duration, interval};
+    use tokio::time::{interval, Duration};
 
     let mut tick = interval(Duration::from_millis(80));
 
@@ -141,6 +141,12 @@ fn handle_key(
     tx: &EventSender,
     config: &config::Config,
 ) -> Result<()> {
+    if key.kind != crossterm::event::KeyEventKind::Press {
+        return Ok(());
+    }
+    if key.code != KeyCode::Esc {
+        app.pending_abort = false;
+    }
     match key.code {
         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
             // Ctrl+C quits.
@@ -157,9 +163,18 @@ fn handle_key(
             return handle_modal_key(app, key, tx, config);
         }
         KeyCode::Esc => {
-            // Esc clears the prompt (and can cancel focus).
             if !app.prompt.is_empty() {
                 app.prompt.reset();
+                app.pending_abort = false;
+            } else if !app.busy.is_empty() {
+                if app.pending_abort {
+                    let _ = tx.send(AppEvent::Abort);
+                    app.pending_abort = false;
+                } else {
+                    app.pending_abort = true;
+                }
+            } else {
+                app.pending_abort = false;
             }
             return Ok(());
         }
@@ -199,15 +214,12 @@ fn handle_key(
             app.prev_buffer();
             return Ok(());
         }
-        KeyCode::Enter if app.active_buffer() == crate::buffers::BufferId::Manage => {
-            // Apply the selected model from the Manage buffer's model list.
-            if let Some(m) = app.manage.selected_model() {
-                app.model_name = m.to_string();
-            }
-            return Ok(());
-        }
         KeyCode::Enter => {
-            submit(app, key.modifiers.contains(KeyModifiers::SHIFT), tx, config)?;
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                app.prompt.insert_char('\n');
+            } else {
+                submit(app, false, tx, config)?;
+            }
             return Ok(());
         }
         KeyCode::PageUp | KeyCode::PageDown => {
@@ -219,20 +231,8 @@ fn handle_key(
                 crate::buffers::BufferId::Chat => &mut app.chat.view,
                 crate::buffers::BufferId::Search => &mut app.search.view,
                 crate::buffers::BufferId::Chtsh => &mut app.chtsh.view,
-                crate::buffers::BufferId::Manage => &mut app.manage.view,
             };
             view.scroll = (view.scroll as i32 + delta * 10).max(0) as usize;
-            return Ok(());
-        }
-        KeyCode::Up | KeyCode::Down if app.active_buffer() == crate::buffers::BufferId::Manage => {
-            let len = app.manage.models.len();
-            if len > 0 {
-                if key.code == KeyCode::Up {
-                    app.manage.model_index = app.manage.model_index.saturating_sub(1);
-                } else {
-                    app.manage.model_index = (app.manage.model_index + 1).min(len - 1);
-                }
-            }
             return Ok(());
         }
         KeyCode::Up | KeyCode::Down => {
@@ -251,6 +251,26 @@ fn handle_key(
                 } else {
                     app.history_forward();
                 }
+            }
+            return Ok(());
+        }
+        KeyCode::Char('w') | KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.prompt.delete_word_backward();
+            return Ok(());
+        }
+        KeyCode::Backspace => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.prompt.delete_word_backward();
+            } else {
+                app.prompt.delete_backward();
+            }
+            return Ok(());
+        }
+        KeyCode::Delete => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.prompt.delete_word_forward();
+            } else {
+                app.prompt.delete_forward();
             }
             return Ok(());
         }
@@ -275,11 +295,11 @@ fn handle_modal_key(
             app.close_modal();
             Ok(())
         }
-        KeyCode::Up => {
+        KeyCode::Up | KeyCode::Char('k') => {
             app.modal_move(true);
             Ok(())
         }
-        KeyCode::Down => {
+        KeyCode::Down | KeyCode::Char('j') => {
             app.modal_move(false);
             Ok(())
         }
@@ -294,12 +314,7 @@ fn handle_modal_key(
 }
 
 /// Handle a submitted prompt: dispatch commands or the active buffer's action.
-fn submit(
-    app: &mut App,
-    shift: bool,
-    tx: &EventSender,
-    config: &config::Config,
-) -> Result<()> {
+fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &config::Config) -> Result<()> {
     // Alt+Enter (shift+enter here approximated) inserts a newline instead.
     if shift {
         app.prompt.insert_char('\n');
@@ -345,17 +360,11 @@ fn submit(
         crate::buffers::BufferId::Chat => run_chat(app, &text, tx, config),
         crate::buffers::BufferId::Search => trigger_search(app, &text, tx, config),
         crate::buffers::BufferId::Chtsh => trigger_chtsh(app, &text, tx, config),
-        crate::buffers::BufferId::Manage => Ok(()),
     }
 }
 
 /// Send the prompt to the selected model and stream the reply.
-fn run_chat(
-    app: &mut App,
-    text: &str,
-    tx: &EventSender,
-    config: &config::Config,
-) -> Result<()> {
+fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &config::Config) -> Result<()> {
     use crate::buffers::chat::ChatMessage;
 
     app.chat.history.push(ChatMessage {
@@ -377,7 +386,7 @@ fn run_chat(
         })
         .collect();
     let tx = tx.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         match ollama.stream_chat(&model, &history, &tx).await {
             Ok(()) => {
                 let _ = tx.send(AppEvent::ChatDone {
@@ -392,6 +401,7 @@ fn run_chat(
             }
         }
     });
+    app.bg_task = Some(handle);
     Ok(())
 }
 
@@ -410,7 +420,7 @@ fn trigger_search(
     let prompt = text.to_string();
     let tx = tx.clone();
     let summarize = config.search.summarize;
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         // Phase 1: model produces the actual search query.
         let plan = plan_search(&ollama, &model, &prompt).await;
         let query = plan
@@ -461,6 +471,7 @@ fn trigger_search(
             let _ = tx.send(AppEvent::SearchDone { markdown: md });
         }
     });
+    app.bg_task = Some(handle);
     Ok(())
 }
 
@@ -478,7 +489,7 @@ fn trigger_chtsh(
     let model = app.model_name.clone();
     let prompt = text.to_string();
     let tx = tx.clone();
-    tokio::spawn(async move {
+    let handle = tokio::spawn(async move {
         let plan = plan_chtsh(&ollama, &model, &prompt).await;
         let planval = match plan {
             Ok(v) => v,
@@ -529,6 +540,7 @@ fn trigger_chtsh(
             }
         }
     });
+    app.bg_task = Some(handle);
     Ok(())
 }
 
@@ -542,8 +554,14 @@ async fn plan_search(
         .complete(
             model,
             vec![
-                ollama::ChatMessage { role: "system".into(), content: sys },
-                ollama::ChatMessage { role: "user".into(), content: prompt.to_string() },
+                ollama::ChatMessage {
+                    role: "system".into(),
+                    content: sys,
+                },
+                ollama::ChatMessage {
+                    role: "user".into(),
+                    content: prompt.to_string(),
+                },
             ],
         )
         .await?;
@@ -561,8 +579,14 @@ async fn plan_chtsh(
         .complete(
             model,
             vec![
-                ollama::ChatMessage { role: "system".into(), content: sys },
-                ollama::ChatMessage { role: "user".into(), content: prompt.to_string() },
+                ollama::ChatMessage {
+                    role: "system".into(),
+                    content: sys,
+                },
+                ollama::ChatMessage {
+                    role: "user".into(),
+                    content: prompt.to_string(),
+                },
             ],
         )
         .await?;
@@ -585,7 +609,10 @@ markdown links. Be terse and structured."
         .complete(
             model,
             vec![
-                ollama::ChatMessage { role: "system".into(), content: sys },
+                ollama::ChatMessage {
+                    role: "system".into(),
+                    content: sys,
+                },
                 ollama::ChatMessage {
                     role: "user".into(),
                     content: format!("Search: {query}\n\nResults:\n{raw}"),
@@ -593,7 +620,10 @@ markdown links. Be terse and structured."
             ],
         )
         .await?;
-    Ok(resp.message.map(|m| m.content).unwrap_or_else(|| raw.to_string()))
+    Ok(resp
+        .message
+        .map(|m| m.content)
+        .unwrap_or_else(|| raw.to_string()))
 }
 
 /// Export the current chat conversation as markdown.

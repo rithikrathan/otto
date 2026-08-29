@@ -64,6 +64,24 @@ impl Theme {
             Style::default().fg(Color::Yellow)
         }
     }
+
+    /// Markdown code block background/foreground
+    pub fn markdown_code(self) -> Style {
+        if self.mono {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().fg(Color::Cyan)
+        }
+    }
+
+    /// Markdown horizontal rule
+    pub fn markdown_hr(self) -> Style {
+        if self.mono {
+            Style::default().add_modifier(Modifier::DIM)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        }
+    }
 }
 
 /// Build the theme, honoring `NO_COLOR`.

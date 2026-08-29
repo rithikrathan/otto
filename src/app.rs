@@ -36,12 +36,12 @@ pub struct App {
     pub search: buffers::search::SearchBuffer,
     /// cht.sh buffer state.
     pub chtsh: buffers::chtsh::ChtshBuffer,
-    /// Manage buffer state.
-    pub manage: buffers::manage::ManageBuffer,
     /// Frame ticker (advances the spinner).
     pub tick: u64,
     /// Default model name (from config/manage selection).
     pub model_name: String,
+    /// Loaded models from Ollama API
+    pub models: Vec<String>,
     /// Currently-open floating window (model picker / settings), if any.
     pub modal: Option<Modal>,
     /// Selection index inside the open modal.
@@ -50,6 +50,10 @@ pub struct App {
     pub settings: SettingsState,
     /// Set to `false` to exit the event loop.
     pub running: bool,
+    /// Wait for a second Esc to abort generating
+    pub pending_abort: bool,
+    /// Handle to the current background task (to allow abortion).
+    pub bg_task: Option<tokio::task::JoinHandle<()>>,
 }
 
 /// Editable settings surfaced in the floating settings window.
@@ -72,12 +76,7 @@ pub enum Modal {
 
 impl App {
     pub fn new() -> Self {
-        let tabs = vec![
-            BufferId::Chat,
-            BufferId::Search,
-            BufferId::Chtsh,
-            BufferId::Manage,
-        ];
+        let tabs = vec![BufferId::Chat, BufferId::Search, BufferId::Chtsh];
         Self {
             tabs,
             active: 0,
@@ -91,9 +90,9 @@ impl App {
             chat: buffers::chat::ChatBuffer::default(),
             search: buffers::search::SearchBuffer::default(),
             chtsh: buffers::chtsh::ChtshBuffer::default(),
-            manage: buffers::manage::ManageBuffer::default(),
             tick: 0,
             model_name: String::new(),
+            models: Vec::new(),
             modal: None,
             modal_index: 0,
             settings: SettingsState {
@@ -105,6 +104,8 @@ impl App {
                 search_summarize: true,
             },
             running: true,
+            pending_abort: false,
+            bg_task: None,
         }
     }
 
@@ -132,7 +133,6 @@ impl App {
             BufferId::Chat => self.chat.view.scroll,
             BufferId::Search => self.search.view.scroll,
             BufferId::Chtsh => self.chtsh.view.scroll,
-            BufferId::Manage => self.manage.view.scroll,
         }
         .min(1_000_000) as u16
     }
@@ -140,6 +140,17 @@ impl App {
     /// Handle an event from the channel: route background results to buffers.
     pub fn handle_event(&mut self, event: AppEvent) {
         match event {
+            AppEvent::Abort => {
+                if let Some(task) = self.bg_task.take() {
+                    task.abort();
+                }
+                self.busy.clear();
+                self.chat.finish_assistant();
+                self.chat.view.blocks.push(crate::buffers::Block {
+                    kind: "info",
+                    markdown: "*Aborted*".into(),
+                });
+            }
             AppEvent::Tick => {}
             AppEvent::Input(_) => {}
             AppEvent::MouseScroll { delta } => {
@@ -147,11 +158,13 @@ impl App {
                     BufferId::Chat => &mut self.chat.view,
                     BufferId::Search => &mut self.search.view,
                     BufferId::Chtsh => &mut self.chtsh.view,
-                    BufferId::Manage => &mut self.manage.view,
                 };
                 view.scroll = (view.scroll as i32 + delta).max(0) as usize;
             }
-            AppEvent::TokenStat { prompt_tokens, eval_tokens } => {
+            AppEvent::TokenStat {
+                prompt_tokens,
+                eval_tokens,
+            } => {
                 // Ollama streams report per-request counts on the done chunk;
                 // accumulate into the running totals.
                 self.tokens.accumulate(prompt_tokens, eval_tokens, None);
@@ -181,12 +194,9 @@ impl App {
                 self.remove_job(JobKind::Chat);
             }
             AppEvent::ModelsLoaded(models) => {
-                self.manage.models = models;
-                if self.manage.model_index >= self.manage.models.len() {
-                    self.manage.model_index = 0;
-                }
+                self.models = models;
                 if self.model_name.is_empty() {
-                    if let Some(first) = self.manage.models.first() {
+                    if let Some(first) = self.models.first() {
                         self.model_name = first.clone();
                     }
                 }
@@ -286,7 +296,9 @@ impl App {
 
     /// Go to the next history entry (Down arrow at the last prompt line).
     pub fn history_forward(&mut self) {
-        let Some(idx) = self.history_index else { return };
+        let Some(idx) = self.history_index else {
+            return;
+        };
         let next = idx + 1;
         if next < self.history.len() {
             self.history_index = Some(next);
@@ -319,7 +331,7 @@ impl App {
     /// Move the modal selection up/down; clamps to the modal's item count.
     pub fn modal_move(&mut self, up: bool) {
         let len = match self.modal {
-            Some(Modal::ModelPicker) => self.manage.models.len(),
+            Some(Modal::ModelPicker) => self.models.len(),
             Some(Modal::Settings) => settings_rows(),
             None => 0,
         };
@@ -331,12 +343,19 @@ impl App {
         } else {
             self.modal_index = (self.modal_index + 1).min(len - 1);
         }
+
+        if let Some(Modal::ModelPicker) = self.modal {
+            if let Some(m) = self.models.get(self.modal_index).cloned() {
+                self.model_name = m.clone();
+                self.settings.model = m;
+            }
+        }
     }
 
     /// Current modal selection label (for rendering/activation).
     pub fn modal_selection(&self) -> Option<String> {
         match self.modal {
-            Some(Modal::ModelPicker) => self.manage.models.get(self.modal_index).cloned(),
+            Some(Modal::ModelPicker) => self.models.get(self.modal_index).cloned(),
             Some(Modal::Settings) => settings_row_label(self.modal_index).map(|s| s.to_string()),
             None => None,
         }
@@ -347,7 +366,7 @@ impl App {
         let mut out = Vec::new();
         match self.modal {
             Some(Modal::ModelPicker) => {
-                let models = self.manage.models.clone();
+                let models = self.models.clone();
                 for (i, m) in models.iter().enumerate() {
                     let sel = self.model_name == *m;
                     out.push((m.clone(), "".to_string(), sel || i == self.modal_index));
@@ -364,11 +383,7 @@ impl App {
                     self.settings.search_summarize.to_string(),
                 ];
                 for (i, label) in SETTINGS_ROWS.iter().enumerate() {
-                    out.push((
-                        (*label).to_string(),
-                        values[i].clone(),
-                        i == sel,
-                    ));
+                    out.push(((*label).to_string(), values[i].clone(), i == sel));
                 }
             }
             None => {}
@@ -380,7 +395,7 @@ impl App {
     pub fn modal_apply(&mut self) -> bool {
         match self.modal {
             Some(Modal::ModelPicker) => {
-                if let Some(m) = self.manage.models.get(self.modal_index).cloned() {
+                if let Some(m) = self.models.get(self.modal_index).cloned() {
                     self.model_name = m;
                     self.settings.model = self.model_name.clone();
                 }
@@ -729,14 +744,53 @@ pub mod input {
             if self.cursor >= self.text.chars().count() {
                 return;
             }
-            let len = self.text[self.cursor..].chars().next().map(|c| c.len_utf8()).unwrap_or(0);
+            let len = self.text[self.cursor..]
+                .chars()
+                .next()
+                .map(|c| c.len_utf8())
+                .unwrap_or(0);
             self.text.replace_range(self.cursor..self.cursor + len, "");
+            self.clamp_scroll();
+        }
+
+        pub fn delete_word_backward(&mut self) {
+            if self.cursor == 0 { return; }
+            let before = &self.text[..self.cursor];
+            let mut iter = before.char_indices().rev().peekable();
+            while let Some(&(_, c)) = iter.peek() {
+                if c.is_whitespace() { iter.next(); } else { break; }
+            }
+            while let Some(&(_, c)) = iter.peek() {
+                if !c.is_whitespace() { iter.next(); } else { break; }
+            }
+            let new_cursor = iter.peek().map(|&(i, c)| i + c.len_utf8()).unwrap_or(0);
+            self.text.replace_range(new_cursor..self.cursor, "");
+            self.cursor = new_cursor;
+            self.clamp_scroll();
+        }
+
+        pub fn delete_word_forward(&mut self) {
+            if self.cursor >= self.text.len() { return; }
+            let after = &self.text[self.cursor..];
+            let mut iter = after.char_indices().peekable();
+            while let Some(&(_, c)) = iter.peek() {
+                if !c.is_whitespace() { iter.next(); } else { break; }
+            }
+            while let Some(&(_, c)) = iter.peek() {
+                if c.is_whitespace() { iter.next(); } else { break; }
+            }
+            let end = self.cursor + iter.peek().map(|&(i, _)| i).unwrap_or(after.len());
+            self.text.replace_range(self.cursor..end, "");
             self.clamp_scroll();
         }
 
         pub fn move_left(&mut self) {
             if self.cursor > 0 {
-                let prev = self.text[..self.cursor].char_indices().next_back().map(|(i, _)| i).unwrap_or(0);
+                let prev = self.text[..self.cursor]
+                    .char_indices()
+                    .next_back()
+                    .map(|(i, _)| i)
+                    .unwrap_or(0);
                 self.cursor = prev;
             }
             self.clamp_scroll();
@@ -744,7 +798,11 @@ pub mod input {
 
         pub fn move_right(&mut self) {
             if self.cursor < self.text.len() {
-                let next = self.text[self.cursor..].chars().next().map(|c| self.cursor + c.len_utf8()).unwrap_or(self.cursor);
+                let next = self.text[self.cursor..]
+                    .chars()
+                    .next()
+                    .map(|c| self.cursor + c.len_utf8())
+                    .unwrap_or(self.cursor);
                 self.cursor = next;
             }
             self.clamp_scroll();
@@ -832,7 +890,8 @@ pub mod input {
         }
 
         pub fn scroll_down(&mut self) {
-            self.scroll = (self.scroll + 1).min(self.wrapped_line_count().saturating_sub(MAX_LINES));
+            self.scroll =
+                (self.scroll + 1).min(self.wrapped_line_count().saturating_sub(MAX_LINES));
         }
 
         /// Move the caret up one logical line, preserving the column.

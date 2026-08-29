@@ -7,16 +7,28 @@ pub mod prompt;
 pub mod spinner;
 pub mod theme;
 
-use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, Tabs};
+use ratatui::Frame;
 
 use crate::app::{App, JobKind};
 
 /// Render the whole app once per frame.
 pub fn draw(frame: &mut Frame, app: &mut App) {
     let theme = theme::current();
+    if frame.area().width < 20 || frame.area().height < 10 {
+        let msg = "Terminal too small. Please resize to at least 20x10.";
+        let p = Paragraph::new(msg)
+            .alignment(ratatui::layout::Alignment::Center)
+            .style(theme.emphasis());
+        let area = frame.area();
+        let y = area.height.saturating_sub(1) / 2;
+        let centered = ratatui::layout::Rect::new(area.x, y, area.width, 1);
+        frame.render_widget(p, centered);
+        return;
+    }
+
     let rows = layout::chunks(frame.area(), &app.prompt);
 
     draw_tabs(frame, app, rows[0], &theme);
@@ -31,7 +43,11 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 /// The tab bar (row 0).
 fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
-    let titles = app.tabs.iter().map(|b| Line::from(b.label())).collect::<Vec<_>>();
+    let titles = app
+        .tabs
+        .iter()
+        .map(|b| Line::from(b.label()))
+        .collect::<Vec<_>>();
     let tabs = Tabs::new(titles)
         .select(app.active)
         .divider(" ")
@@ -43,7 +59,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
 ///
 /// Shows active buffer · model · token stats (read / write / ctx %) · spinner.
 fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
-    let model = app.manage.selected_model().unwrap_or(&app.model_name);
+    let model = &app.model_name;
     let (r, w) = (app.tokens.prompt_tokens, app.tokens.eval_tokens);
     let ctx = app.tokens.context_percent();
 
@@ -56,7 +72,7 @@ fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Them
     ];
     if let Some(job) = app.busy.first() {
         left.push(Span::styled(
-            format!(" {} {}", spinner::frame(app.tick), busy_label(job)),
+            format!(" {} {}", spinner::frame(app.tick, job), busy_label(job)),
             theme.spinner(),
         ));
         left.push(Span::styled(" · ", theme.muted()));
@@ -92,11 +108,14 @@ fn busy_label(job: &JobKind) -> &'static str {
 
 /// The bottom statusline: mode / key hints · STT state.
 fn draw_bottom(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
-    let hint = match app.active_buffer() {
-        crate::buffers::BufferId::Chat => "[Enter]send [Ctrl+K]clear",
-        crate::buffers::BufferId::Search => "[Enter]search",
-        crate::buffers::BufferId::Chtsh => "[Enter]query",
-        crate::buffers::BufferId::Manage => "[j/k]select [Enter]apply",
+    let hint = if app.pending_abort {
+        "Press ESC again to stop prompt"
+    } else {
+        match app.active_buffer() {
+            crate::buffers::BufferId::Chat => "[Enter]send [Ctrl+K]clear",
+            crate::buffers::BufferId::Search => "[Enter]search",
+            crate::buffers::BufferId::Chtsh => "[Enter]query",
+        }
     };
     let mic = if app.busy.contains(&JobKind::Stt) {
         "● REC"

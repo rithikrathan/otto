@@ -19,11 +19,11 @@ pub fn chunks(area: Rect, prompt: &Prompt) -> [Rect; 5] {
     // min terminal gate: need at least tabs(1)+status(1)+prompt(1)+bottom(1)+1
     let prompt_h = prompt_height(prompt);
     let rows = Layout::vertical([
-        Constraint::Length(1),                // tabs
-        Constraint::Min(1),                   // buffer area
-        Constraint::Length(1),                // separator statusline
-        Constraint::Length(prompt_h + 2),     // prompt box (borders + content)
-        Constraint::Length(1),                // bottom statusline
+        Constraint::Length(1),            // tabs
+        Constraint::Min(1),               // buffer area
+        Constraint::Length(1),            // separator statusline
+        Constraint::Length(prompt_h + 2), // prompt box (borders + content)
+        Constraint::Length(1),            // bottom statusline
     ])
     .split(area);
     [

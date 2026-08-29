@@ -12,8 +12,8 @@ pub struct Config {
 
 /// `~/.config/otc/config.toml`
 pub fn config_path() -> anyhow::Result<std::path::PathBuf> {
-    let dir = dirs::config_dir()
-        .ok_or_else(|| anyhow::anyhow!("could not determine config dir"))?;
+    let dir =
+        dirs::config_dir().ok_or_else(|| anyhow::anyhow!("could not determine config dir"))?;
     Ok(dir.join("otc").join("config.toml"))
 }
 
@@ -84,21 +84,31 @@ pub struct Search {
 
 impl Default for Server {
     fn default() -> Self {
-        Self { url: "http://localhost:11434".to_string() }
+        Self {
+            url: "http://localhost:11434".to_string(),
+        }
     }
 }
 impl Default for Model {
     fn default() -> Self {
-        Self { name: "llama3.2".to_string() }
+        Self {
+            name: "llama3.2".to_string(),
+        }
     }
 }
 impl Default for Stt {
     fn default() -> Self {
-        Self { enabled: false, model_path: String::new() }
+        Self {
+            enabled: false,
+            model_path: String::new(),
+        }
     }
 }
 impl Default for Search {
     fn default() -> Self {
-        Self { provider: "duckduckgo".to_string(), summarize: true }
+        Self {
+            provider: "duckduckgo".to_string(),
+            summarize: true,
+        }
     }
 }

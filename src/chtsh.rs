@@ -16,11 +16,7 @@ pub struct ChtshPlan {
 /// Build a cht.sh URL from a topic + query.
 pub fn build_url(plan: &ChtshPlan) -> String {
     let topic = plan.topic.trim().to_lowercase();
-    let joined = plan
-        .query
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join("+");
+    let joined = plan.query.split_whitespace().collect::<Vec<_>>().join("+");
     format!("https://cht.sh/{}/{}?T", topic, joined)
 }
 
@@ -52,7 +48,10 @@ mod tests {
 
     #[test]
     fn builds_url_with_joined_query() {
-        let plan = ChtshPlan { topic: "Rust".into(), query: "read file lines".into() };
+        let plan = ChtshPlan {
+            topic: "Rust".into(),
+            query: "read file lines".into(),
+        };
         assert_eq!(build_url(&plan), "https://cht.sh/rust/read+file+lines?T");
     }
 

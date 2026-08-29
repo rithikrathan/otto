@@ -36,9 +36,9 @@ pub fn parse(line: &str) -> Option<Command> {
         "settings" | "config" => Command::Settings,
         "export" => Command::Export(rest),
         "exit" | "quit" | "q" => Command::Quit,
-        "help" => Command::Unknown(
-            "help: /clear /model [name] /settings /export <path> /exit :q".into(),
-        ),
+        "help" => {
+            Command::Unknown("help: /clear /model [name] /settings /export <path> /exit :q".into())
+        }
         _ => Command::Unknown(name),
     };
     Some(cmd)

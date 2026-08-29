@@ -16,6 +16,8 @@ pub enum AppEvent {
     },
     /// Periodic tick (drives the spinner animation).
     Tick,
+    /// Abort running jobs
+    Abort,
 
     /// Streaming chat token appended to a buffer.
     ChatDelta {

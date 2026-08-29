@@ -49,7 +49,9 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
     let mut recognizer = match Recognizer::new(&model, SAMPLE_RATE as f32) {
         Ok(r) => r,
         Err(e) => {
-            let _ = tx.send(AppEvent::SttError { msg: format!("vosk recognizer: {e}") });
+            let _ = tx.send(AppEvent::SttError {
+                msg: format!("vosk recognizer: {e}"),
+            });
             return;
         }
     };
@@ -59,14 +61,18 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
     let host = match cpal::default_host() {
         Ok(h) => h,
         Err(e) => {
-            let _ = tx.send(AppEvent::SttError { msg: format!("no audio host: {e}") });
+            let _ = tx.send(AppEvent::SttError {
+                msg: format!("no audio host: {e}"),
+            });
             return;
         }
     };
     let device = match host.default_input_device() {
         Some(d) => d,
         None => {
-            let _ = tx.send(AppEvent::SttError { msg: "no input device".into() });
+            let _ = tx.send(AppEvent::SttError {
+                msg: "no input device".into(),
+            });
             return;
         }
     };
@@ -75,14 +81,18 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
     let format = match device.default_input_config() {
         Ok(f) => f,
         Err(e) => {
-            let _ = tx.send(AppEvent::SttError { msg: format!("input config: {e}") });
+            let _ = tx.send(AppEvent::SttError {
+                msg: format!("input config: {e}"),
+            });
             return;
         }
     };
     let sample_rate = format.sample_rate().0;
 
     let err_cb = move |e| {
-        let _ = tx.send(AppEvent::SttError { msg: format!("mic error: {e}") });
+        let _ = tx.send(AppEvent::SttError {
+            msg: format!("mic error: {e}"),
+        });
     };
 
     // Build a stream that forwards frames to audio_tx.
@@ -118,12 +128,16 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
     let stream = match stream {
         Ok(s) => s,
         Err(e) => {
-            let _ = tx.send(AppEvent::SttError { msg: format!("mic stream: {e}") });
+            let _ = tx.send(AppEvent::SttError {
+                msg: format!("mic stream: {e}"),
+            });
             return;
         }
     };
     if let Err(e) = stream.play() {
-        let _ = tx.send(AppEvent::SttError { msg: format!("mic play: {e}") });
+        let _ = tx.send(AppEvent::SttError {
+            msg: format!("mic play: {e}"),
+        });
         return;
     }
 

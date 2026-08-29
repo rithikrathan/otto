@@ -38,31 +38,29 @@ pub fn draw(frame: &mut Frame, app: &App) {
     // Rows: label (and value for settings / check for active model).
     let items: Vec<ListItem> = rows
         .iter()
-        .map(|(label, value, selected)| {
+        .map(|(label, value, _)| {
             let body = if value.is_empty() {
                 label.clone()
             } else {
                 format!("{label} = {value}")
             };
-            let line = if *selected {
-                Line::from(vec![
-                    Span::styled("● ", theme.accent()),
-                    Span::styled(body, theme.emphasis()),
-                ])
-            } else {
-                Line::from(body)
-            };
-            ListItem::new(line)
+            ListItem::new(Line::from(vec![
+                Span::raw("  "),
+                Span::raw(body),
+            ]))
         })
         .collect();
 
     let list = List::new(items)
         .block(block)
-        .highlight_style(theme.emphasis())
-        .highlight_symbol("");
+        .highlight_style(theme.accent())
+        .highlight_symbol("▶");
 
     let inner = list_inner(win);
-    frame.render_widget(list, inner);
+    
+    let mut state = ratatui::widgets::ListState::default();
+    state.select(Some(app.modal_index));
+    frame.render_stateful_widget(list, inner, &mut state);
 
     // Footer with key hints.
     let hint = match modal {
@@ -81,7 +79,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 /// Height of the modal window based on its content.
 fn modal_height(app: &App) -> u16 {
     let rows = match app.modal {
-        Some(Modal::ModelPicker) => app.manage.models.len(),
+        Some(Modal::ModelPicker) => app.models.len(),
         Some(Modal::Settings) => crate::app::settings_rows(),
         None => 0,
     };
@@ -92,6 +90,10 @@ fn modal_height(app: &App) -> u16 {
 fn list_inner(win: Rect) -> Rect {
     Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Min(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Min(1),
+            Constraint::Length(1),
+        ])
         .split(win)[1]
 }

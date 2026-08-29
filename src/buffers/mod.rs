@@ -4,7 +4,6 @@
 
 pub mod chat;
 pub mod chtsh;
-pub mod manage;
 pub mod search;
 
 /// Identity of a switchable buffer tab.
@@ -13,7 +12,6 @@ pub enum BufferId {
     Chat,
     Search,
     Chtsh,
-    Manage,
 }
 
 impl BufferId {
@@ -23,7 +21,6 @@ impl BufferId {
             BufferId::Chat => "Chat",
             BufferId::Search => "Search",
             BufferId::Chtsh => "cht.sh",
-            BufferId::Manage => "Manage",
         }
     }
 }

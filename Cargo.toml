@@ -6,7 +6,7 @@ description = "Ollama TUI chat with web search, cht.sh, and speech-to-text"
 
 [dependencies]
 ratatui = "0.30"
-tui-markdown = "0.3.9"
+
 crossterm = { version = "0.28", features = ["event-stream"] }
 tokio = { version = "1.53", features = ["rt-multi-thread", "macros", "sync", "time"] }
 reqwest = { version = "0.13", features = ["json", "stream"] }

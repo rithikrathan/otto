@@ -40,7 +40,10 @@ pub async fn search(query: &str) -> anyhow::Result<Vec<SearchResult>> {
 
     let mut results = Vec::new();
     // Split result blocks on titled anchors.
-    for block in body.split("<a rel=\"nofollow\" class=\"result__a\" href=\"").skip(1) {
+    for block in body
+        .split("<a rel=\"nofollow\" class=\"result__a\" href=\"")
+        .skip(1)
+    {
         let Some((href, rest)) = block.split_once('"') else {
             continue;
         };
@@ -111,7 +114,11 @@ pub fn results_to_markdown(results: &[SearchResult]) -> String {
         md.push_str(&format!(
             "{}. [{}]({})\n   {}\n\n",
             i + 1,
-            if r.title.is_empty() { r.url.clone() } else { r.title.clone() },
+            if r.title.is_empty() {
+                r.url.clone()
+            } else {
+                r.title.clone()
+            },
             r.url,
             r.snippet
         ));
@@ -191,6 +198,9 @@ mod tests {
     fn decodes_uddg_link() {
         let href =
             "//duckduckgo.com/l/?uddg=https%3A%2F%2Fdoc.rust%2Dlang.org%2Fcargo%2F&amp;rut=12";
-        assert_eq!(decode_link(href).as_deref(), Some("https://doc.rust-lang.org/cargo/"));
+        assert_eq!(
+            decode_link(href).as_deref(),
+            Some("https://doc.rust-lang.org/cargo/")
+        );
     }
 }
