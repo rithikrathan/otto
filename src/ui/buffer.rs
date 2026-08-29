@@ -115,7 +115,8 @@ fn wrap_spans<'a>(
     use ratatui::text::{Line, Span};
     let mut lines = Vec::new();
     let prefix = "│ ";
-    let wrap_width = max_width.saturating_sub(prefix.chars().count());
+    let suffix = " │";
+    let wrap_width = max_width.saturating_sub(prefix.chars().count() + suffix.chars().count());
     if wrap_width == 0 {
         return lines;
     }
@@ -130,6 +131,7 @@ fn wrap_spans<'a>(
         while !text_remain.is_empty() {
             let space_left = wrap_width.saturating_sub(current_len);
             if space_left == 0 {
+                current_line.push(Span::styled(suffix, theme.muted()));
                 lines.push(Line::from(current_line));
                 current_line = vec![Span::styled(prefix, theme.muted())];
                 current_len = 0;
@@ -138,7 +140,7 @@ fn wrap_spans<'a>(
 
             let mut char_count = 0;
             let mut split_idx = text_remain.len();
-            for (i, c) in text_remain.char_indices() {
+            for (i, _) in text_remain.char_indices() {
                 if char_count == space_left {
                     split_idx = i;
                     break;
@@ -154,9 +156,17 @@ fn wrap_spans<'a>(
     }
 
     if current_len > 0 {
+        let padding = wrap_width.saturating_sub(current_len);
+        if padding > 0 {
+            current_line.push(Span::raw(" ".repeat(padding)));
+        }
+        current_line.push(Span::styled(suffix, theme.muted()));
         lines.push(Line::from(current_line));
     } else if lines.is_empty() {
-        lines.push(Line::from(vec![Span::styled(prefix, theme.muted())]));
+        let padding = wrap_width;
+        current_line.push(Span::raw(" ".repeat(padding)));
+        current_line.push(Span::styled(suffix, theme.muted()));
+        lines.push(Line::from(current_line));
     }
 
     lines
@@ -175,7 +185,11 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
         if trimmed.starts_with("```") {
             if in_code_block {
                 let mut bottom = String::from("╰");
-                bottom.push_str(&"─".repeat(width_usize.saturating_sub(1)));
+                let dashes = width_usize.saturating_sub(2);
+                bottom.push_str(&"─".repeat(dashes));
+                if width_usize > 1 {
+                    bottom.push('╯');
+                }
                 lines.push(Line::from(Span::styled(bottom, theme.muted())));
                 in_code_block = false;
                 highlighter = None;
@@ -188,7 +202,11 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
                     top.push_str(&code_lang);
                     top.push_str(" ");
                 }
-                top.push_str(&"─".repeat(width_usize.saturating_sub(top.chars().count())));
+                let dashes = width_usize.saturating_sub(top.chars().count() + 1);
+                top.push_str(&"─".repeat(dashes));
+                if width_usize > top.chars().count() {
+                    top.push('╮');
+                }
                 lines.push(Line::from(Span::styled(top, theme.muted())));
 
                 let ps = get_syntax_set();
