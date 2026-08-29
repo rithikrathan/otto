@@ -61,9 +61,19 @@ impl Theme {
         if self.mono {
             Style::default().add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::Yellow)
+            Style::default().fg(Color::Green)
         }
     }
+
+    /// Active tab style
+    pub fn tab_active(self) -> Style {
+        if self.mono {
+            Style::default().add_modifier(Modifier::REVERSED)
+        } else {
+            Style::default().bg(Color::Cyan).fg(Color::Black).add_modifier(Modifier::BOLD)
+        }
+    }
+
 
     /// Markdown code block background/foreground
     pub fn markdown_code(self) -> Style {

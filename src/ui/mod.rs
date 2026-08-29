@@ -51,7 +51,7 @@ fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
     let tabs = Tabs::new(titles)
         .select(app.active)
         .divider(" ")
-        .highlight_style(theme.emphasis());
+        .highlight_style(theme.tab_active());
     frame.render_widget(tabs, area);
 }
 
