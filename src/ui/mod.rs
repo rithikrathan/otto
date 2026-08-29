@@ -2,6 +2,7 @@
 
 pub mod buffer;
 pub mod layout;
+pub mod modal;
 pub mod prompt;
 pub mod spinner;
 pub mod theme;
@@ -23,6 +24,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     draw_statusline(frame, app, rows[2], &theme);
     prompt::draw(frame, &mut app.prompt, rows[3], &theme);
     draw_bottom(frame, app, rows[4], &theme);
+
+    // Floating window overlays the main UI last so it is on top.
+    modal::draw(frame, app);
 }
 
 /// The tab bar (row 0).

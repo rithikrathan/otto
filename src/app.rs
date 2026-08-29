@@ -42,8 +42,32 @@ pub struct App {
     pub tick: u64,
     /// Default model name (from config/manage selection).
     pub model_name: String,
+    /// Currently-open floating window (model picker / settings), if any.
+    pub modal: Option<Modal>,
+    /// Selection index inside the open modal.
+    pub modal_index: usize,
+    /// Editable settings shown/toggled in the settings window.
+    pub settings: SettingsState,
     /// Set to `false` to exit the event loop.
     pub running: bool,
+}
+
+/// Editable settings surfaced in the floating settings window.
+#[derive(Debug, Clone)]
+pub struct SettingsState {
+    pub model: String,
+    pub server_url: String,
+    pub stt_enabled: bool,
+    pub stt_model_path: String,
+    pub search_provider: String,
+    pub search_summarize: bool,
+}
+
+/// A floating window layered over the main UI.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Modal {
+    ModelPicker,
+    Settings,
 }
 
 impl App {
@@ -70,6 +94,16 @@ impl App {
             manage: buffers::manage::ManageBuffer::default(),
             tick: 0,
             model_name: String::new(),
+            modal: None,
+            modal_index: 0,
+            settings: SettingsState {
+                model: String::new(),
+                server_url: String::new(),
+                stt_enabled: false,
+                stt_model_path: String::new(),
+                search_provider: "duckduckgo".into(),
+                search_summarize: true,
+            },
             running: true,
         }
     }
@@ -269,6 +303,129 @@ impl App {
             self.prompt.set_text(text);
         }
     }
+
+    /// Open a floating window, resetting its selection.
+    pub fn open_modal(&mut self, modal: Modal) {
+        self.modal = Some(modal);
+        self.modal_index = 0;
+    }
+
+    /// Close the currently-open floating window.
+    pub fn close_modal(&mut self) {
+        self.modal = None;
+        self.modal_index = 0;
+    }
+
+    /// Move the modal selection up/down; clamps to the modal's item count.
+    pub fn modal_move(&mut self, up: bool) {
+        let len = match self.modal {
+            Some(Modal::ModelPicker) => self.manage.models.len(),
+            Some(Modal::Settings) => settings_rows(),
+            None => 0,
+        };
+        if len == 0 {
+            return;
+        }
+        if up {
+            self.modal_index = self.modal_index.saturating_sub(1);
+        } else {
+            self.modal_index = (self.modal_index + 1).min(len - 1);
+        }
+    }
+
+    /// Current modal selection label (for rendering/activation).
+    pub fn modal_selection(&self) -> Option<String> {
+        match self.modal {
+            Some(Modal::ModelPicker) => self.manage.models.get(self.modal_index).cloned(),
+            Some(Modal::Settings) => settings_row_label(self.modal_index).map(|s| s.to_string()),
+            None => None,
+        }
+    }
+
+    /// Render the modal as a list of `(label, value, selected)` rows.
+    pub fn modal_rows(&self) -> Vec<(String, String, bool)> {
+        let mut out = Vec::new();
+        match self.modal {
+            Some(Modal::ModelPicker) => {
+                let models = self.manage.models.clone();
+                for (i, m) in models.iter().enumerate() {
+                    let sel = self.model_name == *m;
+                    out.push((m.clone(), "".to_string(), sel || i == self.modal_index));
+                }
+            }
+            Some(Modal::Settings) => {
+                let sel = self.modal_index;
+                let values = [
+                    self.settings.model.clone(),
+                    self.settings.server_url.clone(),
+                    self.settings.stt_enabled.to_string(),
+                    self.settings.stt_model_path.clone(),
+                    self.settings.search_provider.clone(),
+                    self.settings.search_summarize.to_string(),
+                ];
+                for (i, label) in SETTINGS_ROWS.iter().enumerate() {
+                    out.push((
+                        (*label).to_string(),
+                        values[i].clone(),
+                        i == sel,
+                    ));
+                }
+            }
+            None => {}
+        }
+        out
+    }
+
+    /// Apply the current modal selection (Enter). Returns whether it consumed.
+    pub fn modal_apply(&mut self) -> bool {
+        match self.modal {
+            Some(Modal::ModelPicker) => {
+                if let Some(m) = self.manage.models.get(self.modal_index).cloned() {
+                    self.model_name = m;
+                    self.settings.model = self.model_name.clone();
+                }
+                self.close_modal();
+                true
+            }
+            Some(Modal::Settings) => {
+                match settings_row_label(self.modal_index) {
+                    Some("model") => {
+                        // Jump to the model picker.
+                        self.open_modal(Modal::ModelPicker);
+                    }
+                    Some("stt-enabled") => {
+                        self.settings.stt_enabled = !self.settings.stt_enabled;
+                    }
+                    Some("search-summarize") => {
+                        self.settings.search_summarize = !self.settings.search_summarize;
+                    }
+                    _ => {}
+                }
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Editable rows in the settings window.
+const SETTINGS_ROWS: [&str; 6] = [
+    "model",
+    "server-url",
+    "stt-enabled",
+    "stt-model-path",
+    "search-provider",
+    "search-summarize",
+];
+
+/// Number of settings rows shown in the settings window.
+pub fn settings_rows() -> usize {
+    SETTINGS_ROWS.len()
+}
+
+/// Label for a settings row index.
+pub fn settings_row_label(i: usize) -> Option<&'static str> {
+    SETTINGS_ROWS.get(i).copied()
 }
 
 /// Type of in-flight background work.
@@ -431,6 +588,50 @@ mod tests {
         assert_eq!(&p.value()[..p.cursor], "line one\nline two\n"); // start of line three
         p.move_down(); // already at last line: stays
         assert_eq!(&p.value()[..p.cursor], "line one\nline two\n");
+    }
+
+    #[test]
+    fn model_picker_apply_sets_model_and_closes() {
+        let mut app = App::new();
+        app.manage.models = vec!["a".into(), "b".into(), "c".into()];
+        app.open_modal(Modal::ModelPicker);
+        assert_eq!(app.modal, Some(Modal::ModelPicker));
+        app.modal_move(false); // index 1
+        app.modal_move(false); // index 2
+        assert!(app.modal_apply());
+        assert_eq!(app.model_name, "c");
+        assert_eq!(app.settings.model, "c");
+        assert_eq!(app.modal, None);
+    }
+
+    #[test]
+    fn modal_move_clamps_and_close_resets() {
+        let mut app = App::new();
+        app.manage.models = vec!["x".into()];
+        app.open_modal(Modal::ModelPicker);
+        app.modal_move(true); // stays at 0
+        assert_eq!(app.modal_index, 0);
+        app.modal_move(false); // clamped at 0 (only one)
+        assert_eq!(app.modal_index, 0);
+        app.close_modal();
+        assert_eq!(app.modal, None);
+        assert_eq!(app.modal_index, 0);
+    }
+
+    #[test]
+    fn settings_toggle_flips_boolean_row() {
+        let mut app = App::new();
+        app.settings.stt_enabled = false;
+        app.open_modal(Modal::Settings);
+        // navigate to the "stt-enabled" row (index 2)
+        app.modal_index = 2;
+        app.modal_apply();
+        assert_eq!(app.settings.stt_enabled, true);
+        assert_eq!(app.modal, Some(Modal::Settings));
+        // "model" row jumps to the picker
+        app.modal_index = 0;
+        app.modal_apply();
+        assert_eq!(app.modal, Some(Modal::ModelPicker));
     }
 }
 

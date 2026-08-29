@@ -27,6 +27,12 @@ fn main() -> Result<()> {
 
     let mut app = App::new();
     app.model_name = config.model.name.clone();
+    app.settings.model = config.model.name.clone();
+    app.settings.server_url = config.server.url.clone();
+    app.settings.stt_enabled = config.stt.enabled;
+    app.settings.stt_model_path = config.stt.model_path.clone();
+    app.settings.search_provider = config.search.provider.clone();
+    app.settings.search_summarize = config.search.summarize;
 
     crossterm::terminal::enable_raw_mode().context("enable raw mode")?;
     let mut term = Terminal::new(CrosstermBackend::new(io::stdout())).context("create terminal")?;
@@ -146,6 +152,10 @@ fn handle_key(
             app.running = false;
             return Ok(());
         }
+        // A floating window has focus: route keys to it.
+        _ if app.modal.is_some() => {
+            return handle_modal_key(app, key, tx, config);
+        }
         KeyCode::Esc => {
             // Esc clears the prompt (and can cancel focus).
             if !app.prompt.is_empty() {
@@ -253,6 +263,36 @@ fn handle_key(
     Ok(())
 }
 
+/// Handle keys while a floating window (modal) has focus.
+fn handle_modal_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    tx: &EventSender,
+    _config: &config::Config,
+) -> Result<()> {
+    match key.code {
+        KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
+            app.close_modal();
+            Ok(())
+        }
+        KeyCode::Up => {
+            app.modal_move(true);
+            Ok(())
+        }
+        KeyCode::Down => {
+            app.modal_move(false);
+            Ok(())
+        }
+        KeyCode::Enter => {
+            // Applying an async job (e.g. switching models) is sync here.
+            app.modal_apply();
+            let _ = tx;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 /// Handle a submitted prompt: dispatch commands or the active buffer's action.
 fn submit(
     app: &mut App,
@@ -281,6 +321,19 @@ fn submit(
             }
             cmd::Command::Model(m) if !m.is_empty() => {
                 app.model_name = m;
+                Ok(())
+            }
+            cmd::Command::Model(_) => {
+                // `/model` with no arg: open the floating model picker.
+                app.open_modal(app::Modal::ModelPicker);
+                Ok(())
+            }
+            cmd::Command::Settings => {
+                app.open_modal(app::Modal::Settings);
+                Ok(())
+            }
+            cmd::Command::Quit => {
+                app.running = false;
                 Ok(())
             }
             cmd::Command::Export(path) if !path.is_empty() => export_chat(app, &path),
