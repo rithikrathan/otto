@@ -28,12 +28,27 @@ impl BufferId {
 /// The markdown history a buffer displays (shared shape).
 ///
 /// TODO(stub): threading through actual rendering happens in the UI layer.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct BufferState {
     /// Rendered markdown blocks in display order.
     pub blocks: Vec<Block>,
     /// Vertical scroll offset (rows from the top of the content).
     pub scroll: usize,
+    /// If true, view automatically stays pinned to the bottom.
+    pub auto_scroll: bool,
+    /// The maximum possible scroll offset during the last render.
+    pub last_max_scroll: std::cell::Cell<usize>,
+}
+
+impl Default for BufferState {
+    fn default() -> Self {
+        Self {
+            blocks: Vec::new(),
+            scroll: 0,
+            auto_scroll: true,
+            last_max_scroll: std::cell::Cell::new(0),
+        }
+    }
 }
 
 /// One message/result in a buffer.

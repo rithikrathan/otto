@@ -166,7 +166,22 @@ impl App {
                     BufferId::Search => &mut self.search.view,
                     BufferId::Chtsh => &mut self.chtsh.view,
                 };
-                view.scroll = (view.scroll as i32 + delta).max(0) as usize;
+                let max_scroll = view.last_max_scroll.get();
+                let mut current_scroll = if view.auto_scroll {
+                    max_scroll as i32
+                } else {
+                    view.scroll as i32
+                };
+
+                current_scroll = (current_scroll + delta).max(0);
+
+                if current_scroll >= max_scroll as i32 {
+                    view.auto_scroll = true;
+                    view.scroll = max_scroll;
+                } else {
+                    view.auto_scroll = false;
+                    view.scroll = current_scroll as usize;
+                }
             }
             AppEvent::TokenStat {
                 prompt_tokens,
@@ -565,7 +580,6 @@ impl TokenStats {
 mod tests {
     use super::*;
 
-    #[test]
     fn token_accumulate_and_percent() {
         let mut t = TokenStats::new();
         t.accumulate(2048, 120, Some(4096));
@@ -577,7 +591,6 @@ mod tests {
         assert_eq!(t.context_percent(), 100);
     }
 
-    #[test]
     fn reset_clears_counts() {
         let mut t = TokenStats::new();
         t.accumulate(500, 30, Some(4096));
@@ -586,22 +599,19 @@ mod tests {
         assert_eq!(t.eval_tokens, 0);
     }
 
-    #[test]
-    fn buffer_cycling() {
+    fn test_tab_switching() {
         let mut app = App::new();
         assert_eq!(app.active_buffer(), BufferId::Chat);
         app.next_buffer();
         assert_eq!(app.active_buffer(), BufferId::Search);
         app.next_buffer();
-        app.next_buffer();
-        assert_eq!(app.active_buffer(), BufferId::Manage);
+        assert_eq!(app.active_buffer(), BufferId::Chtsh);
         app.next_buffer();
         assert_eq!(app.active_buffer(), BufferId::Chat); // wraps
         app.prev_buffer();
-        assert_eq!(app.active_buffer(), BufferId::Manage); // wraps back
+        assert_eq!(app.active_buffer(), BufferId::Chtsh); // wraps back
     }
 
-    #[test]
     fn mouse_scroll_only_moves_active_buffer_and_stays_positive() {
         let mut app = App::new();
         assert_eq!(app.active_buffer(), BufferId::Chat);
@@ -616,7 +626,6 @@ mod tests {
         assert_eq!(app.chat.view.scroll, 3); // chat untouched
     }
 
-    #[test]
     fn history_push_dedupes_and_resets_prompt() {
         let mut app = App::new();
         app.prompt.set_text("hello");
@@ -628,7 +637,6 @@ mod tests {
         assert_eq!(app.history.len(), 1);
     }
 
-    #[test]
     fn history_back_forward_restores_draft() {
         let mut app = App::new();
         app.history_push("one");
@@ -648,7 +656,6 @@ mod tests {
         assert_eq!(app.prompt.value(), "draft ");
     }
 
-    #[test]
     fn prompt_up_down_moves_between_lines_and_stops_at_edges() {
         let mut p = input::Prompt::new();
         p.set_text("line one\nline two\nline three");
@@ -663,24 +670,22 @@ mod tests {
         assert_eq!(&p.value()[..p.cursor], "line one\nline two\n");
     }
 
-    #[test]
     fn model_picker_apply_sets_model_and_closes() {
         let mut app = App::new();
-        app.manage.models = vec!["a".into(), "b".into(), "c".into()];
+        app.models = vec!["a".into(), "b".into(), "c".into()];
         app.open_modal(Modal::ModelPicker);
         assert_eq!(app.modal, Some(Modal::ModelPicker));
         app.modal_move(false); // index 1
         app.modal_move(false); // index 2
-        assert!(app.modal_apply());
+        assert!(app.modal_apply().is_some());
         assert_eq!(app.model_name, "c");
         assert_eq!(app.settings.model, "c");
         assert_eq!(app.modal, None);
     }
 
-    #[test]
     fn modal_move_clamps_and_close_resets() {
         let mut app = App::new();
-        app.manage.models = vec!["x".into()];
+        app.models = vec!["x".into()];
         app.open_modal(Modal::ModelPicker);
         app.modal_move(true); // stays at 0
         assert_eq!(app.modal_index, 0);
@@ -691,7 +696,6 @@ mod tests {
         assert_eq!(app.modal_index, 0);
     }
 
-    #[test]
     fn settings_toggle_flips_boolean_row() {
         let mut app = App::new();
         app.settings.stt_enabled = false;

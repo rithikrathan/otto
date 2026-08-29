@@ -274,6 +274,31 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let inner_width = area.width.saturating_sub(1); // Account for left border
     let md = parse_markdown(&doc, &theme, inner_width);
 
+    let mut total_lines = 0;
+    for line in &md.lines {
+        let w = line.width() as u16;
+        if w == 0 {
+            total_lines += 1;
+        } else {
+            total_lines += (w + inner_width - 1) / inner_width;
+        }
+    }
+    
+    let max_scroll = total_lines.saturating_sub(area.height) as usize;
+
+    let active_view = match app.active_buffer() {
+        crate::buffers::BufferId::Chat => &app.chat.view,
+        crate::buffers::BufferId::Search => &app.search.view,
+        crate::buffers::BufferId::Chtsh => &app.chtsh.view,
+    };
+    active_view.last_max_scroll.set(max_scroll);
+
+    let scroll_y = if active_view.auto_scroll {
+        max_scroll
+    } else {
+        active_view.scroll.min(max_scroll)
+    };
+
     let block = Block::default()
         .borders(Borders::LEFT)
         .border_style(theme.muted());
@@ -281,7 +306,7 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(md)
         .block(block)
         .wrap(Wrap { trim: false })
-        .scroll((app.active_scroll(), 0));
+        .scroll((scroll_y as u16, 0));
 
     frame.render_widget(paragraph, area);
 }
