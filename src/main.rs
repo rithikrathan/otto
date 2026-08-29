@@ -225,6 +225,10 @@ fn handle_key(
             return Ok(());
         }
         KeyCode::Right => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.prompt.move_word_forward();
+                return Ok(());
+            }
             if let Some(comp) = crate::cmd::autocomplete(&app.prompt.text) {
                 if app.prompt.cursor == app.prompt.text.len() {
                     let comp_str = comp.to_string();
@@ -295,6 +299,12 @@ fn handle_key(
                 app.prompt.delete_forward();
             }
             return Ok(());
+        }
+        KeyCode::Left => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.prompt.move_word_backward();
+                return Ok(());
+            }
         }
         _ => {}
     }

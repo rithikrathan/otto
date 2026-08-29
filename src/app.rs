@@ -846,6 +846,36 @@ pub mod input {
             self.clamp_scroll();
         }
 
+        pub fn move_word_backward(&mut self) {
+            if self.cursor == 0 { return; }
+            let before = &self.text[..self.cursor];
+            let mut iter = before.char_indices().rev().peekable();
+            while let Some(&(_, c)) = iter.peek() {
+                if c.is_whitespace() { iter.next(); } else { break; }
+            }
+            while let Some(&(_, c)) = iter.peek() {
+                if !c.is_whitespace() { iter.next(); } else { break; }
+            }
+            let new_cursor = iter.peek().map(|&(i, c)| i + c.len_utf8()).unwrap_or(0);
+            self.cursor = new_cursor;
+            self.clamp_scroll();
+        }
+
+        pub fn move_word_forward(&mut self) {
+            if self.cursor >= self.text.len() { return; }
+            let after = &self.text[self.cursor..];
+            let mut iter = after.char_indices().peekable();
+            while let Some(&(_, c)) = iter.peek() {
+                if !c.is_whitespace() { iter.next(); } else { break; }
+            }
+            while let Some(&(_, c)) = iter.peek() {
+                if c.is_whitespace() { iter.next(); } else { break; }
+            }
+            let end = self.cursor + iter.peek().map(|&(i, _)| i).unwrap_or(after.len());
+            self.cursor = end;
+            self.clamp_scroll();
+        }
+
         pub fn move_left(&mut self) {
             if self.cursor > 0 {
                 let prev = self.text[..self.cursor]
