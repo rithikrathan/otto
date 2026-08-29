@@ -36,8 +36,12 @@ fn main() -> Result<()> {
 
     crossterm::terminal::enable_raw_mode().context("enable raw mode")?;
     let mut term = Terminal::new(CrosstermBackend::new(io::stdout())).context("create terminal")?;
-    crossterm::execute!(io::stdout(), crossterm::terminal::EnterAlternateScreen)?;
-    crossterm::execute!(io::stdout(), crossterm::cursor::Hide)?;
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::terminal::EnterAlternateScreen,
+        crossterm::cursor::Hide,
+        crossterm::event::EnableMouseCapture
+    )?;
 
 
     let result = tokio::runtime::Builder::new_multi_thread()
@@ -46,8 +50,12 @@ fn main() -> Result<()> {
         .expect("build tokio runtime")
         .block_on(run(&mut term, &mut app, rx, &mut config, tx.clone()));
 
-    crossterm::execute!(io::stdout(), crossterm::cursor::Show)?;
-    crossterm::execute!(io::stdout(), crossterm::terminal::LeaveAlternateScreen)?;
+    crossterm::execute!(
+        io::stdout(),
+        crossterm::cursor::Show,
+        crossterm::event::DisableMouseCapture,
+        crossterm::terminal::LeaveAlternateScreen
+    )?;
 
     crossterm::terminal::disable_raw_mode().ok();
 
@@ -103,7 +111,9 @@ async fn run(
                     crossterm::event::MouseEventKind::ScrollDown => {
                         let _ = tx3.send(AppEvent::MouseScroll { delta: 3 });
                     }
-                    _ => {}
+                    _ => {
+                        let _ = tx3.send(AppEvent::Mouse(m));
+                    }
                 },
                 _ => {}
             }
@@ -124,6 +134,64 @@ async fn run(
                 match ev {
                     Some(AppEvent::Input(key)) => {
                         handle_key(app, key, &tx, config)?;
+                    }
+                    Some(AppEvent::Mouse(m)) => {
+                        use crossterm::event::{MouseEventKind, MouseButton};
+                        match m.kind {
+                            MouseEventKind::Down(MouseButton::Left) => {
+                                app.selection_start = Some((m.column, m.row));
+                                app.selection_end = Some((m.column, m.row));
+                            }
+                            MouseEventKind::Drag(MouseButton::Left) => {
+                                if app.selection_start.is_some() {
+                                    app.selection_end = Some((m.column, m.row));
+                                }
+                            }
+                            MouseEventKind::Up(MouseButton::Left) => {
+                                if let (Some(s), Some(_)) = (app.selection_start, app.selection_end) {
+                                    let mut start = s;
+                                    let mut end = (m.column, m.row);
+                                    if start.1 > end.1 || (start.1 == end.1 && start.0 > end.0) {
+                                        std::mem::swap(&mut start, &mut end);
+                                    }
+                                    
+                                    let buf = term.current_buffer_mut();
+                                    let area = buf.area;
+                                    let mut copied = String::new();
+                                    
+                                    for y in start.1..=end.1 {
+                                        if y >= area.height { break; }
+                                        let x_start = if y == start.1 { start.0 } else { 0 };
+                                        let x_end = if y == end.1 { end.0 } else { area.width.saturating_sub(1) };
+                                        
+                                        let mut line_str = String::new();
+                                        for x in x_start..=x_end {
+                                            if x >= area.width { break; }
+                                            let pos = ratatui::layout::Position { x, y };
+                                            line_str.push_str(buf.cell(pos).map(|c| c.symbol()).unwrap_or(" "));
+                                        }
+                                        copied.push_str(line_str.trim_end());
+                                        if y < end.1 {
+                                            copied.push('\n');
+                                        }
+                                    }
+                                    
+                                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                        let _ = clipboard.set_text(copied.clone());
+                                    }
+                                    
+                                    // Fallback: emit OSC 52 for SSH / tmux multiplexers
+                                    use base64::{Engine as _, engine::general_purpose::STANDARD};
+                                    let encoded = STANDARD.encode(&copied);
+                                    let osc52 = format!("\x1b]52;c;{}\x07", encoded);
+                                    let _ = std::io::Write::write_all(&mut std::io::stdout(), osc52.as_bytes());
+                                    let _ = std::io::Write::flush(&mut std::io::stdout());
+                                }
+                                app.selection_start = None;
+                                app.selection_end = None;
+                            }
+                            _ => {}
+                        }
                     }
                     Some(other) => {
                         if let AppEvent::SearchExecute { query } = &other {

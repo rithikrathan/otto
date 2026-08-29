@@ -38,6 +38,9 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     // Floating window overlays the main UI last so it is on top.
     modal::draw(frame, app);
+
+    // Apply visual selection on top of everything.
+    apply_selection(frame, app, &theme);
 }
 
 
@@ -120,4 +123,33 @@ fn draw_bottom(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
         Span::styled("  [Tab]switch  [Ctrl+Q]quit", theme.muted()),
     ]);
     frame.render_widget(Paragraph::new(line).style(theme.muted()), area);
+}
+
+fn apply_selection(frame: &mut Frame, app: &App, _theme: &theme::Theme) {
+    let (mut start, mut end) = match (app.selection_start, app.selection_end) {
+        (Some(s), Some(e)) => (s, e),
+        _ => return,
+    };
+
+    if start.1 > end.1 || (start.1 == end.1 && start.0 > end.0) {
+        std::mem::swap(&mut start, &mut end);
+    }
+
+    let area = frame.area();
+    let buf = frame.buffer_mut();
+    
+    for y in start.1..=end.1 {
+        if y >= area.height { break; }
+        
+        let x_start = if y == start.1 { start.0 } else { 0 };
+        let x_end = if y == end.1 { end.0 } else { area.width.saturating_sub(1) };
+        
+        for x in x_start..=x_end {
+            if x >= area.width { break; }
+            if let Some(cell) = buf.cell_mut(ratatui::layout::Position { x, y }) {
+                cell.set_fg(ratatui::style::Color::Black);
+                cell.set_bg(ratatui::style::Color::White);
+            }
+        }
+    }
 }
