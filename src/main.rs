@@ -250,16 +250,11 @@ fn handle_key(
             return Ok(());
         }
         KeyCode::PageUp | KeyCode::PageDown => {
-            let (active, delta) = match key.code {
-                KeyCode::PageUp => (app.active_buffer(), -1i32),
-                _ => (app.active_buffer(), 1i32),
+            let delta = match key.code {
+                KeyCode::PageUp => -10i32,
+                _ => 10i32,
             };
-            let view = match active {
-                crate::buffers::BufferId::Chat => &mut app.chat.view,
-                crate::buffers::BufferId::Search => &mut app.search.view,
-                crate::buffers::BufferId::Chtsh => &mut app.chtsh.view,
-            };
-            view.scroll = (view.scroll as i32 + delta * 10).max(0) as usize;
+            let _ = tx.send(AppEvent::MouseScroll { delta });
             return Ok(());
         }
         KeyCode::Up | KeyCode::Down => {
