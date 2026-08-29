@@ -530,7 +530,7 @@ fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &mut config::Co
     app.chat.history.clear();
     app.chat.history.push(ChatMessage {
         role: "system".into(),
-        content: "You are a highly capable AI assistant. Answer the user's questions clearly and concisely. Format your output using elegant markdown, especially for code blocks.".into(),
+        content: "You are an expert AI assistant. Assume the user is an expert. Do not explain code or concepts unless explicitly asked. Get straight to the point. Give concise, reliable, and direct answers. No yapping. Format output using elegant markdown.".into(),
     });
 
     app.chat.history.push(ChatMessage {
