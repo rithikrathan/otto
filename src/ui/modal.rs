@@ -24,6 +24,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     frame.render_widget(Clear, win);
 
+    let (search_rect, list_rect) = if app.modal == Some(Modal::ModelPicker) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(3), Constraint::Min(0)])
+            .split(win);
+        (Some(chunks[0]), chunks[1])
+    } else {
+        (None, win)
+    };
+
     let (title, rows) = match modal {
         Modal::ModelPicker => (" model picker ", app.modal_rows()),
         Modal::Settings => (" settings ", app.modal_rows()),
@@ -56,21 +66,42 @@ pub fn draw(frame: &mut Frame, app: &App) {
         .highlight_style(theme.accent())
         .highlight_symbol("▶");
 
-    let inner = list_inner(win);
+    let inner = list_inner(list_rect);
     
     let mut state = ratatui::widgets::ListState::default();
     state.select(Some(app.modal_index));
     frame.render_stateful_widget(list, inner, &mut state);
 
+    if let Some(rect) = search_rect {
+        let style = if app.modal_search_focused {
+            theme.accent()
+        } else {
+            theme.muted()
+        };
+        let sb = Block::default()
+            .borders(Borders::ALL)
+            .title(" search (.) ")
+            .title_style(style)
+            .border_style(style);
+        
+        let text = if app.modal_search.is_empty() && !app.modal_search_focused {
+            Span::styled("...", theme.muted())
+        } else {
+            Span::raw(&app.modal_search)
+        };
+        
+        frame.render_widget(Paragraph::new(text).block(sb), rect);
+    }
+
     // Footer with key hints.
     let hint = match modal {
-        Modal::ModelPicker => " ↑/↓ move   Enter apply   Esc close ",
+        Modal::ModelPicker => " ↑/↓ move   Enter apply   Esc close   . search ",
         Modal::Settings => " ↑/↓ move   Enter toggle/select   Esc close ",
     };
     let fh = Rect::new(
-        win.x,
-        win.y + win.height.saturating_sub(1).min(area.height - 1),
-        win.width,
+        list_rect.x,
+        list_rect.y + list_rect.height.saturating_sub(1).min(area.height - 1),
+        list_rect.width,
         1,
     );
     frame.render_widget(Paragraph::new(hint).style(theme.muted()), fh);
@@ -78,12 +109,16 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 /// Height of the modal window based on its content.
 fn modal_height(app: &App) -> u16 {
+    let mut extra = 0;
     let rows = match app.modal {
-        Some(Modal::ModelPicker) => app.models.len(),
+        Some(Modal::ModelPicker) => {
+            extra = 3;
+            app.filtered_models().len()
+        }
         Some(Modal::Settings) => crate::app::settings_rows(),
         None => 0,
     };
-    (rows as u16 + 3).clamp(6, 24)
+    (rows as u16 + 3 + extra).clamp(6, 24)
 }
 
 /// The area inside a bordered window (excludes the border).

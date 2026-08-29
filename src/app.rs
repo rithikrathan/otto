@@ -44,6 +44,10 @@ pub struct App {
     pub models: Vec<String>,
     /// Currently-open floating window (model picker / settings), if any.
     pub modal: Option<Modal>,
+    /// Search query for the model picker.
+    pub modal_search: String,
+    /// Whether the model picker search is focused.
+    pub modal_search_focused: bool,
     /// Selection index inside the open modal.
     pub modal_index: usize,
     /// Editable settings shown/toggled in the settings window.
@@ -94,6 +98,8 @@ impl App {
             model_name: String::new(),
             models: Vec::new(),
             modal: None,
+            modal_search: String::new(),
+            modal_search_focused: false,
             modal_index: 0,
             settings: SettingsState {
                 model: String::new(),
@@ -320,19 +326,36 @@ impl App {
     /// Open a floating window, resetting its selection.
     pub fn open_modal(&mut self, modal: Modal) {
         self.modal = Some(modal);
+        self.modal_search.clear();
+        self.modal_search_focused = false;
         self.modal_index = 0;
     }
 
     /// Close the currently-open floating window.
     pub fn close_modal(&mut self) {
         self.modal = None;
+        self.modal_search.clear();
+        self.modal_search_focused = false;
         self.modal_index = 0;
     }
 
     /// Move the modal selection up/down; clamps to the modal's item count.
+    pub fn filtered_models(&self) -> Vec<String> {
+        if self.modal_search.is_empty() {
+            self.models.clone()
+        } else {
+            let lower = self.modal_search.to_lowercase();
+            self.models
+                .iter()
+                .filter(|m| m.to_lowercase().contains(&lower))
+                .cloned()
+                .collect()
+        }
+    }
+
     pub fn modal_move(&mut self, up: bool) {
         let len = match self.modal {
-            Some(Modal::ModelPicker) => self.models.len(),
+            Some(Modal::ModelPicker) => self.filtered_models().len(),
             Some(Modal::Settings) => settings_rows(),
             None => 0,
         };
@@ -346,7 +369,7 @@ impl App {
         }
 
         if let Some(Modal::ModelPicker) = self.modal {
-            if let Some(m) = self.models.get(self.modal_index).cloned() {
+            if let Some(m) = self.filtered_models().get(self.modal_index).cloned() {
                 self.model_name = m.clone();
                 self.settings.model = m;
             }
@@ -367,7 +390,7 @@ impl App {
         let mut out = Vec::new();
         match self.modal {
             Some(Modal::ModelPicker) => {
-                let models = self.models.clone();
+                let models = self.filtered_models();
                 for (i, m) in models.iter().enumerate() {
                     let sel = self.model_name == *m;
                     out.push((m.clone(), "".to_string(), sel || i == self.modal_index));
@@ -396,7 +419,8 @@ impl App {
     pub fn modal_apply(&mut self) -> bool {
         match self.modal {
             Some(Modal::ModelPicker) => {
-                if let Some(m) = self.models.get(self.modal_index).cloned() {
+                let models = self.filtered_models();
+                if let Some(m) = models.get(self.modal_index).cloned() {
                     self.model_name = m;
                     self.settings.model = self.model_name.clone();
                 }

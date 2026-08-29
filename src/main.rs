@@ -290,9 +290,41 @@ fn handle_modal_key(
     tx: &EventSender,
     _config: &config::Config,
 ) -> Result<()> {
+    if app.modal_search_focused {
+        match key.code {
+            KeyCode::Esc => {
+                app.modal_search_focused = false;
+            }
+            KeyCode::Enter => {
+                app.modal_search_focused = false;
+                app.modal_apply();
+            }
+            KeyCode::Backspace => {
+                app.modal_search.pop();
+                app.modal_index = 0;
+            }
+            KeyCode::Char(c) => {
+                app.modal_search.push(c);
+                app.modal_index = 0;
+            }
+            KeyCode::Up => {
+                app.modal_move(true);
+            }
+            KeyCode::Down => {
+                app.modal_move(false);
+            }
+            _ => {}
+        }
+        return Ok(());
+    }
+
     match key.code {
         KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
             app.close_modal();
+            Ok(())
+        }
+        KeyCode::Char('.') if app.modal == Some(app::Modal::ModelPicker) => {
+            app.modal_search_focused = true;
             Ok(())
         }
         KeyCode::Up | KeyCode::Char('k') => {
