@@ -58,10 +58,6 @@ pub struct App {
     pub pending_abort: bool,
     /// Handle to the current background task (to allow abortion).
     pub bg_task: Option<tokio::task::JoinHandle<()>>,
-    /// Custom selection start coordinate (x, y) for copy on select.
-    pub selection_start: Option<(u16, u16)>,
-    /// Custom selection end coordinate (x, y) for copy on select.
-    pub selection_end: Option<(u16, u16)>,
 }
 
 /// Editable settings surfaced in the floating settings window.
@@ -117,8 +113,6 @@ impl App {
             running: true,
             pending_abort: false,
             bg_task: None,
-            selection_start: None,
-            selection_end: None,
         }
     }
 
@@ -166,7 +160,6 @@ impl App {
             }
             AppEvent::Tick => {}
             AppEvent::Input(_) => {}
-            AppEvent::Mouse(_) => {}
             AppEvent::MouseScroll { delta } => {
                 let view = match self.active_buffer() {
                     BufferId::Chat => &mut self.chat.view,

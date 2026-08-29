@@ -14,8 +14,7 @@ pub enum AppEvent {
     MouseScroll {
         delta: i32,
     },
-    /// Raw mouse event (used for selection / copy).
-    Mouse(crossterm::event::MouseEvent),
+
     /// Periodic tick (drives the spinner animation).
     Tick,
     /// Abort running jobs
