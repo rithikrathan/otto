@@ -20,6 +20,12 @@ pub struct App {
     pub focus: Focus,
     /// The shared prompt string (grows up to 5 lines).
     pub prompt: input::Prompt,
+    /// Submitted prompt history (most recent last), for up/down navigation.
+    pub history: Vec<String>,
+    /// Current history cursor: `None` = not browsing (editing a fresh prompt).
+    pub history_index: Option<usize>,
+    /// Saved draft while browsing history, restored when reaching the end.
+    pub history_draft: String,
     /// In-flight background jobs (drive the spinner).
     pub busy: Vec<JobKind>,
     /// Token accounting shown in the statusline (reading / writing / ctx %).
@@ -53,6 +59,9 @@ impl App {
             active: 0,
             focus: Focus::Prompt,
             prompt: input::Prompt::new(),
+            history: Vec::new(),
+            history_index: None,
+            history_draft: String::new(),
             busy: Vec::new(),
             tokens: TokenStats::new(),
             chat: buffers::chat::ChatBuffer::default(),
@@ -207,6 +216,59 @@ impl App {
     pub fn remove_job(&mut self, job: JobKind) {
         self.busy.retain(|j| *j != job);
     }
+
+    /// Record a submitted prompt into history (no consecutive duplicates).
+    pub fn history_push(&mut self, text: &str) {
+        let t = text.trim().to_string();
+        if t.is_empty() {
+            return;
+        }
+        if self.history.last().map(String::as_str) != Some(t.as_str()) {
+            self.history.push(t);
+        }
+        // Reset the browser to a fresh prompt.
+        self.history_index = None;
+        self.prompt.reset();
+    }
+
+    /// Go to the previous history entry (Up arrow at the first prompt line).
+    pub fn history_back(&mut self) {
+        if self.history.is_empty() {
+            return;
+        }
+        // On first entry, stash the current draft so we can restore it later.
+        if self.history_index.is_none() {
+            self.history_draft = self.prompt.value().to_string();
+            self.history_index = Some(self.history.len() - 1);
+            self.load_history(self.history.len() - 1);
+            return;
+        }
+        let idx = self.history_index.unwrap();
+        if idx > 0 {
+            self.history_index = Some(idx - 1);
+            self.load_history(idx - 1);
+        }
+    }
+
+    /// Go to the next history entry (Down arrow at the last prompt line).
+    pub fn history_forward(&mut self) {
+        let Some(idx) = self.history_index else { return };
+        let next = idx + 1;
+        if next < self.history.len() {
+            self.history_index = Some(next);
+            self.load_history(next);
+        } else {
+            // Reached the end: restore the original draft.
+            self.history_index = None;
+            self.prompt.set_text(&self.history_draft);
+        }
+    }
+
+    fn load_history(&mut self, idx: usize) {
+        if let Some(text) = self.history.get(idx) {
+            self.prompt.set_text(text);
+        }
+    }
 }
 
 /// Type of in-flight background work.
@@ -323,6 +385,53 @@ mod tests {
         assert_eq!(app.search.view.scroll, 2);
         assert_eq!(app.chat.view.scroll, 3); // chat untouched
     }
+
+    #[test]
+    fn history_push_dedupes_and_resets_prompt() {
+        let mut app = App::new();
+        app.prompt.set_text("hello");
+        app.history_push("hello");
+        assert_eq!(app.history, vec!["hello".to_string()]);
+        assert!(app.prompt.is_empty());
+        // duplicate is not added again
+        app.history_push("hello");
+        assert_eq!(app.history.len(), 1);
+    }
+
+    #[test]
+    fn history_back_forward_restores_draft() {
+        let mut app = App::new();
+        app.history_push("one");
+        app.history_push("two");
+        app.prompt.set_text("draft "); // user started typing
+
+        app.history_back();
+        assert_eq!(app.prompt.value(), "two");
+        app.history_back();
+        assert_eq!(app.prompt.value(), "one");
+        app.history_back(); // already at oldest: no change
+        assert_eq!(app.prompt.value(), "one");
+
+        app.history_forward();
+        assert_eq!(app.prompt.value(), "two");
+        app.history_forward(); // past the end: restore draft
+        assert_eq!(app.prompt.value(), "draft ");
+    }
+
+    #[test]
+    fn prompt_up_down_moves_between_lines_and_stops_at_edges() {
+        let mut p = input::Prompt::new();
+        p.set_text("line one\nline two\nline three");
+        p.cursor = 0; // start of "line one"
+        p.move_up(); // already at first line: stays
+        assert_eq!(p.cursor, 0);
+        p.move_down();
+        assert_eq!(&p.value()[..p.cursor], "line one\n"); // start of line two
+        p.move_down();
+        assert_eq!(&p.value()[..p.cursor], "line one\nline two\n"); // start of line three
+        p.move_down(); // already at last line: stays
+        assert_eq!(&p.value()[..p.cursor], "line one\nline two\n");
+    }
 }
 
 pub mod input {
@@ -359,6 +468,13 @@ pub mod input {
         pub fn reset(&mut self) {
             self.text.clear();
             self.cursor = 0;
+            self.scroll = 0;
+        }
+
+        /// Replace the whole prompt (history load), caret to the end.
+        pub fn set_text(&mut self, text: &str) {
+            self.text = text.to_string();
+            self.cursor = self.text.len();
             self.scroll = 0;
         }
 
@@ -518,6 +634,42 @@ pub mod input {
             self.scroll = (self.scroll + 1).min(self.wrapped_line_count().saturating_sub(MAX_LINES));
         }
 
+        /// Move the caret up one logical line, preserving the column.
+        pub fn move_up(&mut self) {
+            let col = self.cursor_column();
+            let before = &self.text[..self.cursor.min(self.text.len())];
+            if let Some(prev_nl) = before.rfind('\n') {
+                let line_start = &self.text[..prev_nl];
+                let line_col = current_line_column(line_start);
+                self.cursor = prev_nl + col.min(line_col);
+            } else {
+                self.cursor = 0;
+            }
+            self.clamp_scroll();
+        }
+
+        /// Move the caret down one logical line, preserving the column.
+        pub fn move_down(&mut self) {
+            let col = self.cursor_column();
+            let after = &self.text[self.cursor.min(self.text.len())..];
+            // Only move down if there is another line below the caret.
+            if let Some(rel) = after.find('\n') {
+                let line_start = self.cursor + rel + 1;
+                let line = &self.text[line_start..];
+                self.cursor = line_start + col.min(current_line_column(line));
+                self.clamp_scroll();
+            }
+        }
+
+        /// Column of the caret within its current logical line (in chars).
+        fn cursor_column(&self) -> usize {
+            let before = &self.text[..self.cursor.min(self.text.len())];
+            match before.rfind('\n') {
+                Some(pos) => before[pos + 1..].chars().count(),
+                None => before.chars().count(),
+            }
+        }
+
         /// Handle a key relevant to editing (returns true if consumed).
         pub fn key(&mut self, key: KeyCode, width: usize) -> bool {
             self.set_width(width);
@@ -559,5 +711,10 @@ pub mod input {
                 _ => false,
             }
         }
+    }
+
+    /// Number of characters in a single line (used for column clamping).
+    fn current_line_column(line: &str) -> usize {
+        line.chars().count()
     }
 }

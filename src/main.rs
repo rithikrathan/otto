@@ -225,6 +225,25 @@ fn handle_key(
             }
             return Ok(());
         }
+        KeyCode::Up | KeyCode::Down => {
+            // Prompt: move the caret up/down a line; at the top/bottom edge,
+            // navigate history (Up = previous, Down = next).
+            let before = app.prompt.cursor;
+            if key.code == KeyCode::Up {
+                app.prompt.move_up();
+            } else {
+                app.prompt.move_down();
+            }
+            if app.prompt.cursor == before {
+                // Caret couldn't move (edge of the prompt): browse history.
+                if key.code == KeyCode::Up {
+                    app.history_back();
+                } else {
+                    app.history_forward();
+                }
+            }
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -251,7 +270,7 @@ fn submit(
     if text.trim().is_empty() {
         return Ok(());
     }
-    app.prompt.reset();
+    app.history_push(&text);
 
     if let Some(cmd) = cmd::parse(&text) {
         return match cmd {
