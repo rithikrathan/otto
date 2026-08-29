@@ -30,6 +30,51 @@ fn active_document(app: &App) -> String {
     doc
 }
 
+fn tokenize_markdown_line<'a>(text: &str, theme: &theme::Theme) -> Vec<ratatui::text::Span<'a>> {
+    use ratatui::text::Span;
+    let mut spans = Vec::new();
+    let mut current = String::new();
+    let mut chars = text.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        if c == '*' && chars.peek() == Some(&'*') {
+            chars.next(); // consume second *
+            if !current.is_empty() {
+                spans.push(Span::raw(current.clone()));
+                current.clear();
+            }
+            let mut bold_text = String::new();
+            while let Some(ic) = chars.next() {
+                if ic == '*' && chars.peek() == Some(&'*') {
+                    chars.next();
+                    break;
+                }
+                bold_text.push(ic);
+            }
+            spans.push(Span::styled(bold_text, theme.emphasis()));
+        } else if c == '`' {
+            if !current.is_empty() {
+                spans.push(Span::raw(current.clone()));
+                current.clear();
+            }
+            let mut code_text = String::new();
+            while let Some(ic) = chars.next() {
+                if ic == '`' {
+                    break;
+                }
+                code_text.push(ic);
+            }
+            spans.push(Span::styled(code_text, theme.markdown_code().bg(ratatui::style::Color::Rgb(40, 40, 40))));
+        } else {
+            current.push(c);
+        }
+    }
+    if !current.is_empty() {
+        spans.push(Span::raw(current));
+    }
+    spans
+}
+
 fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui::text::Text<'a> {
     use ratatui::text::{Line, Span};
     let mut lines = Vec::new();
@@ -37,6 +82,7 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
     let mut code_lang = String::new();
 
     let width_usize = width as usize;
+    let code_bg = ratatui::style::Color::Rgb(30, 30, 30);
 
     for line in doc.lines() {
         let trimmed = line.trim();
@@ -44,7 +90,7 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
             if in_code_block {
                 let mut bottom = String::from("╰");
                 bottom.push_str(&"─".repeat(width_usize.saturating_sub(1)));
-                lines.push(Line::from(Span::styled(bottom, theme.muted())));
+                lines.push(Line::from(Span::styled(bottom, theme.muted().bg(code_bg))));
                 in_code_block = false;
             } else {
                 in_code_block = true;
@@ -55,15 +101,21 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
                     top.push_str(" ");
                 }
                 top.push_str(&"─".repeat(width_usize.saturating_sub(top.chars().count())));
-                lines.push(Line::from(Span::styled(top, theme.muted())));
+                lines.push(Line::from(Span::styled(top, theme.muted().bg(code_bg))));
             }
             continue;
         }
 
         if in_code_block {
+            let mut text = line.to_string();
+            let display_width = text.chars().count() + 2;
+            if display_width < width_usize {
+                text.push_str(&" ".repeat(width_usize.saturating_sub(display_width)));
+            }
+            
             lines.push(Line::from(vec![
-                Span::styled("│ ", theme.muted()),
-                Span::styled(line.to_string(), theme.markdown_code()),
+                Span::styled("│ ", theme.muted().bg(code_bg)),
+                Span::styled(text, theme.markdown_code().bg(code_bg)),
             ]));
             continue;
         }
@@ -74,23 +126,21 @@ fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui
             continue;
         }
 
-        if trimmed.starts_with("# ") || trimmed.starts_with("## ") || trimmed.starts_with("### ") {
-            lines.push(Line::from(Span::styled(line.to_string(), theme.emphasis())));
+        if trimmed.starts_with("# ") {
+            let header = trimmed.strip_prefix("# ").unwrap_or("").to_string();
+            lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::Cyan))));
+            continue;
+        } else if trimmed.starts_with("## ") {
+            let header = trimmed.strip_prefix("## ").unwrap_or("").to_string();
+            lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::LightCyan))));
+            continue;
+        } else if trimmed.starts_with("### ") {
+            let header = trimmed.strip_prefix("### ").unwrap_or("").to_string();
+            lines.push(Line::from(Span::styled(header, theme.emphasis())));
             continue;
         }
 
-        // Bold extraction for header topics (e.g. `**Search:**`)
-        if trimmed.starts_with("**") {
-            if let Some((bold, rest)) = trimmed[2..].split_once("**") {
-                lines.push(Line::from(vec![
-                    Span::styled(format!("**{}**", bold), theme.emphasis()),
-                    Span::raw(rest.to_string()),
-                ]));
-                continue;
-            }
-        }
-
-        lines.push(Line::from(line.to_string()));
+        lines.push(Line::from(tokenize_markdown_line(line, theme)));
     }
     ratatui::text::Text::from(lines)
 }
