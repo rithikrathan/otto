@@ -11,12 +11,12 @@ pub struct SearchBuffer {
 }
 
 impl SearchBuffer {
-    pub fn add_result(&mut self, query: &str, markdown: &str) -> Block {
-        // TODO(stub): model's last_query and append a block.
-        Block {
+    pub fn add_result(&mut self, query: &str, markdown: &str) {
+        self.view.blocks.push(Block {
             kind: "search".to_string(),
             markdown: format!("**Search » {}**\n\n{}", query, markdown),
-        }
+        });
+        self.view.scroll = 9999;
     }
 
     pub fn clear(&mut self) {

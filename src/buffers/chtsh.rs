@@ -9,12 +9,12 @@ pub struct ChtshBuffer {
 }
 
 impl ChtshBuffer {
-    pub fn add_result(&mut self, query: &str, text: &str) -> Block {
-        // TODO(stub): render cht.sh output as a block.
-        Block {
+    pub fn add_result(&mut self, query: &str, text: &str) {
+        self.view.blocks.push(Block {
             kind: "cht.sh".to_string(),
             markdown: format!("**cht.sh/{}**\n\n```sh\n{}\n```", query, text),
-        }
+        });
+        self.view.scroll = 9999;
     }
 
     pub fn clear(&mut self) {
