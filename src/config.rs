@@ -10,11 +10,11 @@ pub struct Config {
     pub search: Search,
 }
 
-/// `~/.config/otc/config.toml`
+/// `~/.config/otto/config.toml`
 pub fn config_path() -> anyhow::Result<std::path::PathBuf> {
     let dir =
         dirs::config_dir().ok_or_else(|| anyhow::anyhow!("could not determine config dir"))?;
-    Ok(dir.join("otc").join("config.toml"))
+    Ok(dir.join("otto").join("config.toml"))
 }
 
 impl Config {
@@ -50,7 +50,7 @@ impl Default for Config {
             },
             stt: Stt {
                 enabled: false,
-                model_path: "~/.local/share/otc/vosk-model-small-en-us".to_string(),
+                model_path: "~/.local/share/otto/vosk-model-small-en-us".to_string(),
             },
             search: Search {
                 provider: "duckduckgo".to_string(),

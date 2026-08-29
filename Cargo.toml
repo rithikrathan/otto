@@ -1,5 +1,5 @@
 [package]
-name = "otc"
+name = "otto"
 version = "0.1.0"
 edition = "2021"
 description = "Ollama TUI chat with web search, cht.sh, and speech-to-text"

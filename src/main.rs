@@ -1,4 +1,4 @@
-//! `otc` — an Ollama TUI chat client built on ratatui.
+//! `otto` — an Ollama TUI chat client built on ratatui.
 
 mod app;
 mod buffers;
@@ -598,7 +598,17 @@ async fn plan_search(
         )
         .await?;
     let out = resp.message.map(|m| m.content).unwrap_or_default();
-    Ok(serde_json::from_str(&out).unwrap_or(serde_json::json!({ "query": prompt })))
+    Ok(serde_json::from_str(extract_json(&out)).unwrap_or(serde_json::json!({ "query": prompt })))
+}
+
+fn extract_json(s: &str) -> &str {
+    let s = s.trim();
+    if let Some(start) = s.find('{') {
+        if let Some(end) = s.rfind('}') {
+            return &s[start..=end];
+        }
+    }
+    s
 }
 
 async fn plan_chtsh(
@@ -623,7 +633,7 @@ async fn plan_chtsh(
         )
         .await?;
     let out = resp.message.map(|m| m.content).unwrap_or_default();
-    Ok(serde_json::from_str(&out).unwrap_or(serde_json::json!({})))
+    Ok(serde_json::from_str(extract_json(&out)).unwrap_or(serde_json::json!({})))
 }
 
 /// Summarize a raw result list into a concise, procedural markdown answer.

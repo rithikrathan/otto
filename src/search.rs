@@ -31,7 +31,7 @@ pub async fn search(query: &str) -> anyhow::Result<Vec<SearchResult>> {
     let url = format!("https://html.duckduckgo.com/html/?q={}", urlencoding(query));
     let body = reqwest::Client::new()
         .get(&url)
-        .header("User-Agent", "Mozilla/5.0 otc/0.1")
+        .header("User-Agent", "Mozilla/5.0 otto/0.1")
         .send()
         .await?
         .error_for_status()?
