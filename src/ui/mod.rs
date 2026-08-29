@@ -31,29 +31,15 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     let rows = layout::chunks(frame.area(), &app.prompt);
 
-    draw_tabs(frame, app, rows[0], &theme);
-    buffer::draw(frame, app, rows[1]);
-    draw_statusline(frame, app, rows[2], &theme);
-    prompt::draw(frame, &mut app.prompt, rows[3], &theme);
-    draw_bottom(frame, app, rows[4], &theme);
+    buffer::draw(frame, app, rows[0]);
+    draw_statusline(frame, app, rows[1], &theme);
+    prompt::draw(frame, &mut app.prompt, rows[2], &theme);
+    draw_bottom(frame, app, rows[3], &theme);
 
     // Floating window overlays the main UI last so it is on top.
     modal::draw(frame, app);
 }
 
-/// The tab bar (row 0).
-fn draw_tabs(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
-    let titles = app
-        .tabs
-        .iter()
-        .map(|b| Line::from(b.label()))
-        .collect::<Vec<_>>();
-    let tabs = Tabs::new(titles)
-        .select(app.active)
-        .divider(" ")
-        .highlight_style(theme.tab_active());
-    frame.render_widget(tabs, area);
-}
 
 /// The separator statusline between the buffer and the prompt box.
 ///

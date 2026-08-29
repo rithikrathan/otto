@@ -55,10 +55,40 @@ pub fn draw(frame: &mut Frame, app: &App) {
             } else {
                 format!("{label} = {value}")
             };
-            ListItem::new(Line::from(vec![
-                Span::raw("  "),
-                Span::raw(body),
-            ]))
+            let max_w = width.saturating_sub(6) as usize;
+            let mut lines = Vec::new();
+            let mut current_line = String::new();
+            for word in body.split_whitespace() {
+                if current_line.is_empty() {
+                    current_line.push_str(word);
+                } else if current_line.len() + 1 + word.len() <= max_w {
+                    current_line.push(' ');
+                    current_line.push_str(word);
+                } else {
+                    lines.push(current_line);
+                    current_line = word.to_string();
+                }
+            }
+            if !current_line.is_empty() {
+                lines.push(current_line);
+            }
+            if lines.is_empty() {
+                lines.push(String::new());
+            }
+
+            let text_lines: Vec<Line> = lines
+                .into_iter()
+                .enumerate()
+                .map(|(i, l)| {
+                    if i == 0 {
+                        Line::from(vec![Span::raw("  "), Span::raw(l)])
+                    } else {
+                        Line::from(vec![Span::raw("    "), Span::raw(l)])
+                    }
+                })
+                .collect();
+
+            ListItem::new(ratatui::text::Text::from(text_lines))
         })
         .collect();
 
