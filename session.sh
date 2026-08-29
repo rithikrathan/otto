@@ -22,3 +22,4 @@ tmux send-keys -t "$SESSION:superfile" "spf" C-m
 
 tmux select-window -t "$SESSION:editor"
 tmux attach-session -t "$SESSION"
+# hey write a python program for binary search  and also give  a c version 

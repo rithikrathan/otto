@@ -38,6 +38,8 @@ pub struct BufferState {
     pub auto_scroll: bool,
     /// The maximum possible scroll offset during the last render.
     pub last_max_scroll: std::cell::Cell<usize>,
+    /// Cache for parsed markdown to prevent lagging.
+    pub cached_markdown: std::cell::RefCell<Option<(String, u16, ratatui::text::Text<'static>)>>,
 }
 
 impl Default for BufferState {
@@ -47,6 +49,7 @@ impl Default for BufferState {
             scroll: 0,
             auto_scroll: true,
             last_max_scroll: std::cell::Cell::new(0),
+            cached_markdown: std::cell::RefCell::new(None),
         }
     }
 }

@@ -66,7 +66,7 @@ fn syntect_style_to_ratatui(style: syntect::highlighting::Style) -> ratatui::sty
         .fg(ratatui::style::Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b))
 }
 
-fn tokenize_markdown_line<'a>(text: &str, theme: &theme::Theme) -> Vec<ratatui::text::Span<'a>> {
+fn tokenize_markdown_line(text: &str, theme: &theme::Theme) -> Vec<ratatui::text::Span<'static>> {
     use ratatui::text::Span;
     let mut spans = Vec::new();
     let mut current = String::new();
@@ -111,11 +111,11 @@ fn tokenize_markdown_line<'a>(text: &str, theme: &theme::Theme) -> Vec<ratatui::
     spans
 }
 
-fn wrap_spans<'a>(
+fn wrap_spans(
     regions: Vec<(syntect::highlighting::Style, &str)>,
     max_width: usize,
     theme: &theme::Theme,
-) -> Vec<ratatui::text::Line<'a>> {
+) -> Vec<ratatui::text::Line<'static>> {
     use ratatui::text::{Line, Span};
     let mut lines = Vec::new();
     let prefix = "│ ";
@@ -179,7 +179,7 @@ fn wrap_spans<'a>(
     lines
 }
 
-fn parse_markdown<'a>(doc: &'a str, theme: &theme::Theme, width: u16) -> ratatui::text::Text<'a> {
+fn parse_markdown(doc: &str, theme: &theme::Theme, width: u16) -> ratatui::text::Text<'static> {
     use ratatui::text::{Line, Span};
     let mut lines = Vec::new();
     let mut in_code_block = false;
@@ -272,7 +272,20 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
     let doc = active_document(app);
     let inner_width = area.width.saturating_sub(1); // Account for left border
-    let md = parse_markdown(&doc, &theme, inner_width);
+
+    let active_view = match app.active_buffer() {
+        crate::buffers::BufferId::Chat => &app.chat.view,
+        crate::buffers::BufferId::Search => &app.search.view,
+        crate::buffers::BufferId::Chtsh => &app.chtsh.view,
+    };
+
+    let mut cache = active_view.cached_markdown.borrow_mut();
+    if cache.is_none() || cache.as_ref().unwrap().0 != doc || cache.as_ref().unwrap().1 != inner_width {
+        let parsed = parse_markdown(&doc, &theme, inner_width);
+        *cache = Some((doc.clone(), inner_width, parsed));
+    }
+
+    let md = cache.as_ref().unwrap().2.clone();
 
     let mut total_lines = 0;
     for line in &md.lines {
@@ -285,12 +298,6 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     }
     
     let max_scroll = total_lines.saturating_sub(area.height) as usize;
-
-    let active_view = match app.active_buffer() {
-        crate::buffers::BufferId::Chat => &app.chat.view,
-        crate::buffers::BufferId::Search => &app.search.view,
-        crate::buffers::BufferId::Chtsh => &app.chtsh.view,
-    };
     active_view.last_max_scroll.set(max_scroll);
 
     let scroll_y = if active_view.auto_scroll {
