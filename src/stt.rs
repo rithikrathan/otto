@@ -38,19 +38,19 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
 
     let model_path = expand_home(model_path);
     let model = match Model::new(&model_path) {
-        Ok(m) => m,
-        Err(e) => {
+        Some(m) => m,
+        None => {
             let _ = tx.send(AppEvent::SttError {
-                msg: format!("vosk model load failed ({model_path}): {e}"),
+                msg: format!("vosk model load failed ({model_path})"),
             });
             return;
         }
     };
     let mut recognizer = match Recognizer::new(&model, SAMPLE_RATE as f32) {
-        Ok(r) => r,
-        Err(e) => {
+        Some(r) => r,
+        None => {
             let _ = tx.send(AppEvent::SttError {
-                msg: format!("vosk recognizer: {e}"),
+                msg: "vosk recognizer creation failed".into(),
             });
             return;
         }
@@ -58,15 +58,7 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
 
     // Set up a channel so the audio callback can send PCM to this task.
     let (audio_tx, audio_rx) = mpsc::channel::<Vec<i16>>();
-    let host = match cpal::default_host() {
-        Ok(h) => h,
-        Err(e) => {
-            let _ = tx.send(AppEvent::SttError {
-                msg: format!("no audio host: {e}"),
-            });
-            return;
-        }
-    };
+    let host = cpal::default_host();
     let device = match host.default_input_device() {
         Some(d) => d,
         None => {
@@ -89,8 +81,9 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
     };
     let sample_rate = format.sample_rate().0;
 
+    let tx_err = (*tx).clone();
     let err_cb = move |e| {
-        let _ = tx.send(AppEvent::SttError {
+        let _ = tx_err.send(AppEvent::SttError {
             msg: format!("mic error: {e}"),
         });
     };
@@ -102,7 +95,7 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
                 let _ = audio_tx.send(data.to_vec());
             },
-            err_cb,
+            err_cb.clone(),
             None,
         ),
         cpal::SampleFormat::F32 => device.build_input_stream(
@@ -145,13 +138,12 @@ pub async fn start_recording(model_path: &str, tx: &JobTx) {
     let scale: f64 = SAMPLE_RATE as f64 / sample_rate as f64;
     while let Ok(buf) = audio_rx.recv() {
         for &sample in &buf {
-            recognizer.accept_waveform(&[sample]);
+            let _ = recognizer.accept_waveform(&[sample]);
         }
         let _ = scale;
-        let partial = recognizer.partial_result().single();
-        let text = partial.map(|p| p.partial_text.clone()).unwrap_or_default();
-        if !text.is_empty() {
-            let _ = tx.send(AppEvent::SttPartial { text });
+        let partial_text = recognizer.partial_result().partial;
+        if !partial_text.is_empty() {
+            let _ = tx.send(AppEvent::SttPartial { text: partial_text.to_string() });
         }
     }
 
