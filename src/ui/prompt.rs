@@ -1,16 +1,25 @@
 //! The expandable prompt box: wraps, grows to 5 lines, then scrolls internally.
 
-use crate::app::input::Prompt;
-use ratatui::layout::Rect;
-use ratatui::text::Line;
+use crate::app::{App, JobKind};
+use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::style::Color;
+use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
 use super::theme::Theme;
 
-/// Draw the prompt box into `area`, honoring `prompt.scroll` (first visible row).
-pub fn draw(frame: &mut Frame, prompt: &mut Prompt, area: Rect, theme: &Theme) {
-    let width = area.width.saturating_sub(4) as usize; // minus borders and horizontal padding
+pub fn draw(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
+    let mic_width = if area.height >= 5 { 11 } else { 0 };
+    let chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Min(0), Constraint::Length(mic_width)])
+        .split(area);
+        
+    let prompt_area = chunks[0];
+    let prompt = &mut app.prompt;
+
+    let width = prompt_area.width.saturating_sub(4) as usize; // minus borders and horizontal padding
     if width == 0 { return; }
     prompt.width = width;
 
@@ -70,12 +79,12 @@ pub fn draw(frame: &mut Frame, prompt: &mut Prompt, area: Rect, theme: &Theme) {
         .block(block)
         .scroll((prompt.scroll as u16, 0));
 
-    frame.render_widget(paragraph, area);
+    frame.render_widget(paragraph, prompt_area);
 
     // Draw the cursor manually using a reversed block to prevent hardware cursor flicker.
-    let x = area.x + 2 + cursor_col as u16; // 1 for border, 1 for padding
-    let y = area.y + 1 + cursor_row.saturating_sub(prompt.scroll) as u16;
-    if x < area.x + area.width && y < area.y + area.height {
+    let x = prompt_area.x + 2 + cursor_col as u16; // 1 for border, 1 for padding
+    let y = prompt_area.y + 1 + cursor_row.saturating_sub(prompt.scroll) as u16;
+    if x < prompt_area.x + prompt_area.width && y < prompt_area.y + prompt_area.height {
         if let Some(cell) = frame.buffer_mut().cell_mut((x, y)) {
             let symbol = cell.symbol();
             if symbol == " " || symbol.is_empty() {
@@ -86,5 +95,41 @@ pub fn draw(frame: &mut Frame, prompt: &mut Prompt, area: Rect, theme: &Theme) {
                 cell.set_style(cell.style().add_modifier(ratatui::style::Modifier::REVERSED));
             }
         }
+    }
+    
+    if mic_width > 0 {
+        let mic_area = chunks[1];
+        let is_active = app.busy.contains(&JobKind::Stt);
+        let tick = app.tick as usize;
+        
+        let (fg, border_color) = if is_active {
+            let active_colors = [
+                Color::Rgb(255, 50, 50),
+                Color::Rgb(255, 100, 50),
+                Color::Rgb(255, 150, 50),
+                Color::Rgb(255, 50, 100),
+                Color::Rgb(255, 0, 50),
+            ];
+            (active_colors[(tick / 2) % active_colors.len()], Color::Rgb(255, 50, 50))
+        } else {
+            let inactive_colors = [
+                Color::DarkGray,
+                Color::Rgb(100, 100, 100),
+                Color::Gray,
+                Color::Rgb(100, 100, 100),
+            ];
+            (inactive_colors[(tick / 5) % inactive_colors.len()], Color::DarkGray)
+        };
+        
+        // Microphone symbol centered vertically
+        let symbol = if is_active { " 🎙️ " } else { " 🎤 " };
+        let mut mic_lines = vec![Line::from(""); (mic_area.height as usize).saturating_sub(3) / 2];
+        mic_lines.push(Line::from(vec![Span::styled(symbol, ratatui::style::Style::default().fg(fg))]).alignment(ratatui::layout::Alignment::Center));
+        
+        let mic_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(ratatui::style::Style::default().fg(border_color));
+            
+        frame.render_widget(Paragraph::new(mic_lines).block(mic_block), mic_area);
     }
 }

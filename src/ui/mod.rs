@@ -33,7 +33,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
     buffer::draw(frame, app, rows[0]);
     draw_statusline(frame, app, rows[1], &theme);
-    prompt::draw(frame, &mut app.prompt, rows[2], &theme);
+    prompt::draw(frame, app, rows[2], &theme);
     draw_bottom(frame, app, rows[3], &theme);
 
     // Floating window overlays the main UI last so it is on top.
