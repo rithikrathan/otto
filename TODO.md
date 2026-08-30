@@ -1,65 +1,8 @@
-Role & Objective
-You are an expert Rust developer. Implement a cht.sh (cheat.sh) client integration within the existing Rust TUI application. The feature will use a 3-line horizontal prompt space for query construction and the existing buffer/Markdown renderer to display the cheat sheets.
-
-Strict Architectural Constraints
-
-UI Reuse: Use ONLY the allocated 3-line prompt space at the bottom/top of the screen and the main Buffer. Do NOT introduce floating windows, popups, or new buffers.
-
-Renderer Reuse: Feed the cht.sh output into the application's existing Markdown renderer. cht.sh returns ANSI-colored text by default; you MUST append ?T to the URL to strip ANSI and return plain text (e.g., curl cht.sh/rust/read+file?T), which can then be parsed as Markdown.
-
-No Async Blocking: Network requests for fetching suggestions or cheat sheets must not block the TUI event loop.
-
-Phase 1: Models & API Client
-Define the structures to interface with the cheat.sh API.
-
-Implement a ChtShClient with async methods:
-
-fetch_root_list() -> Result<Vec<String>>: Fetches [https://cht.sh/:list?T](https://cht.sh/:list?T)
-
-fetch_topic_list(lang: &str) -> Result<Vec<String>>: Fetches [https://cht.sh/](https://cht.sh/){lang}/:list?T
-
-fetch_sheet(lang_or_cmd: &str, query: Option<&str>) -> Result<String>: Fetches [https://cht.sh/](https://cht.sh/){lang_or_cmd}/{query}?T (ensure spaces in the query are replaced with +).
-
-Phase 2: Caching & State Management
-Implement local caching so the TUI remains perfectly responsive.
-
-On initialization, check if the root list (languages and commands) is in the local SQLite cache. If missing or stale (older than 7 days), fetch and store it asynchronously.
-
-When a user locks in a language, check the SQLite cache for its topic list. Fetch asynchronously if missing.
-
-Implement a fast, in-memory fuzzy finder (using a crate like nucleo, skim, or simple substring matching) that operates against these cached lists based on the user's current input.
-
-Phase 3: The 3-Line TUI Component
-Implement a custom input component conforming strictly to a 3-line height constraint.
-
-Line 1 (Status): Render static keybindings and current state (e.g., [Tab] Switch fields | [Enter] Fetch).
-
-Line 2 (Inputs): Render two distinct input blocks side-by-side: [ Scope ] / [ Query ].
-
-Implement internal focus state: the user is either typing in the Scope block or the Query block.
-
-Bind Tab and Left/Right arrow keys to toggle focus between the two blocks.
-
-Line 3 (Fuzzy Suggestions): Listen to input changes in the active block. Run the fuzzy matcher against the cached list. Render the top 3 to 5 matches horizontally, separated by a visual divider (e.g., |).
-
-Bind Up/Down arrow keys to cycle through the horizontal suggestions on Line 3.
-
-Bind Space to auto-complete the active block with the highlighted suggestion.
-
-Phase 4: Fetch & Render Pipeline
-Connect the UI to the buffer.
-
-Bind the Enter key. When pressed:
-
-Clear the 3-line prompt or collapse it to its inactive state.
-
-Display a "Fetching from cht.sh..." status in the existing statusline.
-
-Trigger the async fetch_sheet method using the values from Scope and Query.
-
-On success, pass the plain-text result to the application's existing Markdown renderer and load it into the main buffer.
-
-On failure, report the HTTP/Network error in the statusline without crashing the app.
+# [COMPLETED] cht.sh (cheat.sh) client integration
+- [x] Phase 1: Models & API Client (`ChtShClient` with `fetch_root_list`, `fetch_topic_list`, `fetch_sheet` with `?T`)
+- [x] Phase 2: Caching & State Management (7-day TTL disk cache, async background fetching, SkimMatcherV2 fuzzy finding)
+- [x] Phase 3: 3-Line TUI Component (Line 1: Status/keys, Line 2: `[ Scope ] │ [ Query ]`, Line 3: Horizontal fuzzy suggestions with `[Space]` completion & `[↑/↓]` selection)
+- [x] Phase 4: Fetch & Render Pipeline (Direct fetch on Enter, render to Markdown buffer, graceful error handling)
 
 
 
