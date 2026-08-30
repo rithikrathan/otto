@@ -67,8 +67,6 @@ pub struct App {
 pub struct SettingsState {
     pub model: String,
     pub server_url: String,
-    pub stt_enabled: bool,
-    pub stt_model_path: String,
     pub search_provider: String,
     pub search_summarize: bool,
 }
@@ -107,8 +105,6 @@ impl App {
             settings: SettingsState {
                 model: String::new(),
                 server_url: String::new(),
-                stt_enabled: false,
-                stt_model_path: String::new(),
                 search_provider: "duckduckgo".into(),
                 search_summarize: true,
             },
@@ -255,19 +251,6 @@ impl App {
                 });
                 self.remove_job(JobKind::ChtshFetch);
                 self.remove_job(JobKind::ChtshPlan);
-            }
-            AppEvent::SttPartial { .. } => {}
-            AppEvent::SttFinal { text } => {
-                self.prompt.text.push_str(&text);
-                self.prompt.cursor = self.prompt.text.len();
-                self.remove_job(JobKind::Stt);
-            }
-            AppEvent::SttError { msg } => {
-                self.busy.retain(|j| *j != JobKind::Stt);
-                self.chat.view.blocks.push(crate::buffers::Block {
-                    kind: "error".to_string(),
-                    markdown: format!("*stt: {msg}*"),
-                });
             }
             AppEvent::SearchPlan { .. } | AppEvent::ChtshPlan { .. } => {}
             AppEvent::MarkBusy { job, on } => {
@@ -436,8 +419,6 @@ impl App {
                 let values = [
                     self.settings.model.clone(),
                     self.settings.server_url.clone(),
-                    self.settings.stt_enabled.to_string(),
-                    self.settings.stt_model_path.clone(),
                     self.settings.search_provider.clone(),
                     self.settings.search_summarize.to_string(),
                 ];
@@ -473,9 +454,6 @@ impl App {
                         // Jump to the model picker.
                         self.open_modal(Modal::ModelPicker);
                     }
-                    Some("stt-enabled") => {
-                        self.settings.stt_enabled = !self.settings.stt_enabled;
-                    }
                     Some("search-summarize") => {
                         self.settings.search_summarize = !self.settings.search_summarize;
                     }
@@ -503,11 +481,9 @@ impl App {
 }
 
 /// Editable rows in the settings window.
-const SETTINGS_ROWS: [&str; 6] = [
+const SETTINGS_ROWS: [&str; 4] = [
     "model",
     "server-url",
-    "stt-enabled",
-    "stt-model-path",
     "search-provider",
     "search-summarize",
 ];
@@ -530,7 +506,6 @@ pub enum JobKind {
     SearchFetch,
     ChtshPlan,
     ChtshFetch,
-    Stt,
     Models,
 }
 
@@ -704,12 +679,12 @@ mod tests {
 
     fn settings_toggle_flips_boolean_row() {
         let mut app = App::new();
-        app.settings.stt_enabled = false;
+        app.settings.search_summarize = false;
         app.open_modal(Modal::Settings);
-        // navigate to the "stt-enabled" row (index 2)
-        app.modal_index = 2;
+        // navigate to the "search-summarize" row (index 3)
+        app.modal_index = 3;
         app.modal_apply();
-        assert_eq!(app.settings.stt_enabled, true);
+        assert_eq!(app.settings.search_summarize, true);
         assert_eq!(app.modal, Some(Modal::Settings));
         // "model" row jumps to the picker
         app.modal_index = 0;

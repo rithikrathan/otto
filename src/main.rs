@@ -8,7 +8,6 @@ mod config;
 mod event;
 mod ollama;
 mod search;
-mod stt;
 mod ui;
 
 use std::io;
@@ -29,8 +28,6 @@ fn main() -> Result<()> {
     app.model_name = config.model.name.clone();
     app.settings.model = config.model.name.clone();
     app.settings.server_url = config.server.url.clone();
-    app.settings.stt_enabled = config.stt.enabled;
-    app.settings.stt_model_path = config.stt.model_path.clone();
     app.settings.search_provider = config.search.provider.clone();
     app.settings.search_summarize = config.search.summarize;
 
@@ -208,28 +205,6 @@ fn handle_key(
             // Ctrl+K clears the context.
             app.chat.clear();
             app.tokens.reset();
-            return Ok(());
-        }
-        KeyCode::Char('m') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            // Ctrl+M toggles speech-to-text (requires the `stt` feature + libvosk).
-            if !stt::ENABLED {
-                app.chat.view.blocks.push(crate::buffers::Block {
-                    kind: "info".to_string(),
-                    markdown: "STT not compiled (build with `--features stt` and install libvosk)."
-                        .into(),
-                });
-                return Ok(());
-            }
-            if app.busy.contains(&app::JobKind::Stt) {
-                app.remove_job(app::JobKind::Stt);
-            } else {
-                app.busy.push(app::JobKind::Stt);
-                let tx = tx.clone();
-                let path = config.stt.model_path.clone();
-                tokio::spawn(async move {
-                    stt::start_recording(&path, &tx).await;
-                });
-            }
             return Ok(());
         }
         KeyCode::Tab => {

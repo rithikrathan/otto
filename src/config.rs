@@ -6,7 +6,6 @@
 pub struct Config {
     pub server: Server,
     pub model: Model,
-    pub stt: Stt,
     pub search: Search,
 }
 
@@ -48,10 +47,6 @@ impl Default for Config {
             model: Model {
                 name: "qwen2.5-coder-1.5b:latest".to_string(),
             },
-            stt: Stt {
-                enabled: false,
-                model_path: "~/.local/share/otto/vosk-model-small-en-us".to_string(),
-            },
             search: Search {
                 provider: "google".to_string(),
                 summarize: true,
@@ -71,12 +66,6 @@ pub struct Model {
 }
 
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
-pub struct Stt {
-    pub enabled: bool,
-    pub model_path: String,
-}
-
-#[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct Search {
     pub provider: String,
     pub summarize: bool,
@@ -93,14 +82,6 @@ impl Default for Model {
     fn default() -> Self {
         Self {
             name: "qwen2.5-coder-1.5b:latest".to_string(),
-        }
-    }
-}
-impl Default for Stt {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            model_path: String::new(),
         }
     }
 }

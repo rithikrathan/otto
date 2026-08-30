@@ -77,17 +77,6 @@ pub enum AppEvent {
     /// Model list from `/api/tags`.
     ModelsLoaded(Vec<String>),
 
-    /// Speech-to-text partial result while recording.
-    SttPartial {
-        text: String,
-    },
-    /// Speech-to-text final result, ready to insert into the prompt.
-    SttFinal {
-        text: String,
-    },
-    SttError {
-        msg: String,
-    },
 
     /// Add/remove a busy-job marker (drives the spinner).
     MarkBusy {

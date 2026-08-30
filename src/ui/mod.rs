@@ -97,12 +97,11 @@ fn busy_label(job: &JobKind) -> &'static str {
         JobKind::SearchFetch => "searching",
         JobKind::ChtshPlan => "planning",
         JobKind::ChtshFetch => "fetching",
-        JobKind::Stt => "listening",
         JobKind::Models => "loading models",
     }
 }
 
-/// The bottom statusline: mode / key hints · STT state.
+/// The bottom statusline: mode / key hints.
 fn draw_bottom(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
     let hint = if app.pending_abort {
         "Press ESC again to stop prompt"
@@ -113,17 +112,11 @@ fn draw_bottom(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
             crate::buffers::BufferId::Chtsh => "[Enter]query",
         }
     };
-    let mic = if app.busy.contains(&JobKind::Stt) {
-        "● REC"
-    } else {
-        "[Ctrl+M]mic"
-    };
     let line = Line::from(vec![
         Span::styled(" ", theme.muted()),
         Span::styled(hint, theme.muted()),
         Span::styled(" │ ", theme.muted()),
-        Span::styled(mic, theme.muted()),
-        Span::styled("  [Tab]switch  [Ctrl+Q]quit", theme.muted()),
+        Span::styled("[Tab]switch  [Ctrl+Q]quit", theme.muted()),
     ]);
     frame.render_widget(Paragraph::new(line).style(theme.muted()), area);
 }

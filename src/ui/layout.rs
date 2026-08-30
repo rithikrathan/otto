@@ -47,14 +47,14 @@ mod tests {
     #[test]
     fn empty_prompt_box_is_three_rows() {
         let p = Prompt::new();
-        assert_eq!(chunks(area(), &p)[3].height, 3);
+        assert_eq!(chunks(area(), &p)[2].height, 3);
     }
 
     #[test]
     fn single_line_prompt_stays_three_rows() {
         let mut p = Prompt::new();
         p.text = "hello".to_string();
-        assert_eq!(chunks(area(), &p)[3].height, 3);
+        assert_eq!(chunks(area(), &p)[2].height, 3);
     }
 
     #[test]
@@ -62,7 +62,7 @@ mod tests {
         let mut p = Prompt::new();
         p.text = "one two three four five six seven eight nine ten eleven twelve".to_string();
         p.width = 10; // force wrapping into multiple rows
-        let h = chunks(area(), &p)[3].height;
+        let h = chunks(area(), &p)[2].height;
         assert!(h > 3, "expected prompt to grow, got {h}");
         assert!(h <= MAX_LINES as u16 + 2);
     }
