@@ -40,6 +40,14 @@ pub struct App {
     pub tick: u64,
     /// Default model name (from config/manage selection).
     pub model_name: String,
+    /// Active provider name (e.g. ollama, openai, groq, gemini, nvidia, openrouter).
+    pub provider_name: String,
+    /// Ordered provider tabs for model picker.
+    pub provider_list: Vec<String>,
+    /// Active provider tab index in model picker.
+    pub provider_index: usize,
+    /// Loaded models per provider.
+    pub provider_models: std::collections::HashMap<String, Vec<String>>,
     /// Loaded models from Ollama API
     pub models: Vec<String>,
     /// Currently-open floating window (model picker / settings), if any.
@@ -83,6 +91,12 @@ pub enum Modal {
 impl App {
     pub fn new() -> Self {
         let tabs = vec![BufferId::Chat, BufferId::Search, BufferId::Chtsh];
+        let provider_list = vec![
+            "ollama".to_string(),
+            "groq".to_string(),
+            "gemini".to_string(),
+            "nvidia".to_string(),
+        ];
         let mut app = Self {
             tabs,
             active: 0,
@@ -98,6 +112,10 @@ impl App {
             chtsh: buffers::chtsh::ChtshBuffer::default(),
             tick: 0,
             model_name: String::new(),
+            provider_name: "ollama".to_string(),
+            provider_list,
+            provider_index: 0,
+            provider_models: std::collections::HashMap::new(),
             models: Vec::new(),
             modal: None,
             modal_search: String::new(),
@@ -116,6 +134,28 @@ impl App {
         };
         app.chtsh.refresh_suggestions();
         app
+    }
+
+    pub fn init_from_config(&mut self, config: &crate::config::Config) {
+        self.provider_name = config.server.provider.clone();
+        if let Some(pos) = self.provider_list.iter().position(|p| p == &self.provider_name) {
+            self.provider_index = pos;
+        }
+
+        self.provider_models.insert("ollama".into(), config.providers.ollama.models.clone());
+        self.provider_models.insert("openai".into(), config.providers.openai.models.clone());
+        self.provider_models.insert("groq".into(), config.providers.groq.models.clone());
+        self.provider_models.insert("gemini".into(), config.providers.gemini.models.clone());
+        self.provider_models.insert("nvidia".into(), config.providers.nvidia.models.clone());
+        self.provider_models.insert("openrouter".into(), config.providers.openrouter.models.clone());
+        self.provider_models.insert("custom".into(), config.providers.custom.models.clone());
+
+        self.models = self.provider_models.get(&self.provider_name).cloned().unwrap_or_default();
+        if self.model_name.is_empty() {
+            self.model_name = config.model.name.clone();
+        }
+        self.settings.model = self.model_name.clone();
+        self.settings.server_url = config.resolve_url(&self.provider_name);
     }
 
     /// Move to the next buffer (Tab).
@@ -219,7 +259,10 @@ impl App {
                 self.remove_job(JobKind::Chat);
             }
             AppEvent::ModelsLoaded(models) => {
-                self.models = models;
+                if !models.is_empty() {
+                    self.provider_models.insert(self.provider_name.clone(), models.clone());
+                    self.models = models;
+                }
                 if self.model_name.is_empty() {
                     if let Some(first) = self.models.first() {
                         self.model_name = first.clone();
@@ -227,16 +270,28 @@ impl App {
                 }
                 self.remove_job(JobKind::Models);
             }
-            AppEvent::SearchDone { markdown } => {
-                let q = self.search.last_query.clone().unwrap_or_default();
-                self.search.add_result(&q, &markdown);
+            AppEvent::ProviderModelsLoaded { provider, models } => {
+                if !models.is_empty() {
+                    self.provider_models.insert(provider.clone(), models.clone());
+                    if self.active_provider_tab() == provider || self.provider_name == provider {
+                        self.models = self.provider_models.get(&self.provider_name).cloned().unwrap_or(models);
+                    }
+                }
+            }
+            AppEvent::SearchResultsLoaded { query, results } => {
+                self.search.set_results(&query, results);
+                self.remove_job(JobKind::SearchFetch);
+                self.remove_job(JobKind::SearchPlan);
+            }
+            AppEvent::SearchDocumentLoaded { url, title, markdown, .. } => {
+                self.search.set_document(&url, &title, &markdown);
                 self.remove_job(JobKind::SearchFetch);
                 self.remove_job(JobKind::SearchPlan);
             }
             AppEvent::SearchError { msg } => {
                 self.search.view.blocks.push(crate::buffers::Block {
                     kind: "error".to_string(),
-                    markdown: format!("*{msg}*"),
+                    markdown: format!("*Search Error: {msg}*"),
                 });
                 self.remove_job(JobKind::SearchFetch);
                 self.remove_job(JobKind::SearchPlan);
@@ -266,7 +321,7 @@ impl App {
                     self.chtsh.refresh_suggestions();
                 }
             }
-            AppEvent::SearchPlan { .. } | AppEvent::ChtshPlan { .. } => {}
+            AppEvent::ChtshPlan { .. } => {}
             AppEvent::MarkBusy { job, on } => {
                 if on {
                     if !self.busy.contains(&job) {
@@ -279,17 +334,6 @@ impl App {
             AppEvent::ConnectionStatus(status) => {
                 self.is_connected = status;
             }
-            AppEvent::SearchRefinedQuery { query } => {
-                if let Some(Modal::SearchQueryPicker(opts)) = &mut self.modal {
-                    if !opts.contains(&query) {
-                        opts.push(query);
-                    }
-                }
-            }
-            AppEvent::SearchExecute { query: _ } => {
-                // Handled in main loop
-            }
-            AppEvent::SearchFetch => {}
         }
     }
 
@@ -369,23 +413,65 @@ impl App {
         self.modal_index = 0;
     }
 
-    /// Move the modal selection up/down; clamps to the modal's item count.
-    pub fn filtered_models(&self) -> Vec<String> {
+    pub fn active_provider_tab(&self) -> &str {
+        self.provider_list.get(self.provider_index).map(|s| s.as_str()).unwrap_or("ollama")
+    }
+
+    pub fn modal_next_provider(&mut self) {
+        if !self.provider_list.is_empty() {
+            self.provider_index = (self.provider_index + 1) % self.provider_list.len();
+            self.modal_index = 0;
+            let p = self.active_provider_tab().to_string();
+            self.models = self.provider_models.get(&p).cloned().unwrap_or_default();
+        }
+    }
+
+    pub fn modal_prev_provider(&mut self) {
+        if !self.provider_list.is_empty() {
+            if self.provider_index == 0 {
+                self.provider_index = self.provider_list.len() - 1;
+            } else {
+                self.provider_index -= 1;
+            }
+            self.modal_index = 0;
+            let p = self.active_provider_tab().to_string();
+            self.models = self.provider_models.get(&p).cloned().unwrap_or_default();
+        }
+    }
+
+    /// Return models with their provider: (provider_id, model_name)
+    pub fn filtered_models_with_provider(&self) -> Vec<(String, String)> {
         if self.modal_search.is_empty() {
-            self.models.clone()
+            let p = self.active_provider_tab().to_string();
+            let list = self.provider_models.get(&p).cloned().unwrap_or_default();
+            list.into_iter().map(|m| (p.clone(), m)).collect()
         } else {
             let lower = self.modal_search.to_lowercase();
-            self.models
-                .iter()
-                .filter(|m| m.to_lowercase().contains(&lower))
-                .cloned()
-                .collect()
+            let mut matches = Vec::new();
+            for p in &self.provider_list {
+                if let Some(list) = self.provider_models.get(p) {
+                    for m in list {
+                        if m.to_lowercase().contains(&lower) || p.to_lowercase().contains(&lower) {
+                            matches.push((p.clone(), m.clone()));
+                        }
+                    }
+                }
+            }
+            matches
         }
+    }
+
+    /// Move the modal selection up/down; clamps to the modal's item count.
+    pub fn filtered_models(&self) -> Vec<String> {
+        self.filtered_models_with_provider()
+            .into_iter()
+            .map(|(_, m)| m)
+            .collect()
     }
 
     pub fn modal_move(&mut self, up: bool) {
         let len = match &self.modal {
-            Some(Modal::ModelPicker) => self.filtered_models().len(),
+            Some(Modal::ModelPicker) => self.filtered_models_with_provider().len(),
             Some(Modal::Settings) => settings_rows(),
             Some(Modal::SearchQueryPicker(opts)) => opts.len(),
             Some(Modal::Help) => 16,
@@ -399,19 +485,12 @@ impl App {
         } else {
             self.modal_index = (self.modal_index + 1).min(len - 1);
         }
-
-        if let Some(Modal::ModelPicker) = self.modal {
-            if let Some(m) = self.filtered_models().get(self.modal_index).cloned() {
-                self.model_name = m.clone();
-                self.settings.model = m;
-            }
-        }
     }
 
     /// Current modal selection label (for rendering/activation).
     pub fn modal_selection(&self) -> Option<String> {
         match &self.modal {
-            Some(Modal::ModelPicker) => self.models.get(self.modal_index).cloned(),
+            Some(Modal::ModelPicker) => self.filtered_models().get(self.modal_index).cloned(),
             Some(Modal::Settings) => settings_row_label(self.modal_index).map(|s| s.to_string()),
             Some(Modal::SearchQueryPicker(opts)) => opts.get(self.modal_index).cloned(),
             Some(Modal::Help) => None,
@@ -424,10 +503,16 @@ impl App {
         let mut out = Vec::new();
         match &self.modal {
             Some(Modal::ModelPicker) => {
-                let models = self.filtered_models();
-                for (i, m) in models.iter().enumerate() {
-                    let sel = self.model_name == *m;
-                    out.push((m.clone(), "".to_string(), sel || i == self.modal_index));
+                let items = self.filtered_models_with_provider();
+                for (i, (prov, m)) in items.iter().enumerate() {
+                    let is_active = self.provider_name == *prov && self.model_name == *m;
+                    let label = if self.modal_search.is_empty() {
+                        m.clone()
+                    } else {
+                        format!("[{prov}] {m}")
+                    };
+                    let value = if is_active { "✓ (active)".to_string() } else { "".to_string() };
+                    out.push((label, value, i == self.modal_index));
                 }
             }
             Some(Modal::Settings) => {
@@ -456,6 +541,7 @@ impl App {
                     ("Ctrl+K", "Clear chat context"),
                     ("/settings", "Open settings"),
                     ("/model", "Open model picker"),
+                    ("Left / Right (in Model Picker)", "Switch provider category"),
                     ("Ctrl+Left / Right", "Move word backward / forward"),
                     ("Ctrl+W / Ctrl+Bksp", "Delete word backward"),
                     ("Ctrl+Delete", "Delete word forward"),
@@ -479,13 +565,17 @@ impl App {
     pub fn modal_apply(&mut self) -> Option<AppEvent> {
         match &self.modal {
             Some(Modal::ModelPicker) => {
-                let models = self.filtered_models();
-                if let Some(m) = models.get(self.modal_index).cloned() {
+                let items = self.filtered_models_with_provider();
+                if let Some((p, m)) = items.get(self.modal_index).cloned() {
+                    self.provider_name = p.clone();
+                    if let Some(pos) = self.provider_list.iter().position(|prov| prov == &p) {
+                        self.provider_index = pos;
+                    }
                     self.model_name = m.clone();
                     self.settings.model = self.model_name.clone();
                 }
                 self.close_modal();
-                Some(AppEvent::Tick) // Just to trigger a redraw/consume
+                Some(AppEvent::Tick)
             }
             Some(Modal::Settings) => {
                 match settings_row_label(self.modal_index) {
@@ -500,17 +590,7 @@ impl App {
                 }
                 Some(AppEvent::Tick)
             }
-            Some(Modal::SearchQueryPicker(opts)) => {
-                if let Some(q) = opts.get(self.modal_index).cloned() {
-                    self.close_modal();
-                    let clean_q = q.strip_prefix("✨ ").unwrap_or(&q)
-                        .split(" (AI")
-                        .next()
-                        .unwrap_or(&q)
-                        .trim()
-                        .to_string();
-                    return Some(AppEvent::SearchExecute { query: clean_q });
-                }
+            Some(Modal::SearchQueryPicker(_)) => {
                 self.close_modal();
                 Some(AppEvent::Tick)
             }

@@ -42,21 +42,16 @@ pub enum AppEvent {
         eval_tokens: u64,
     },
 
-    /// Search query plan produced by the model.
-    SearchPlan {
-        query: Vec<String>,
-        provider: String,
-    },
-    SearchRefinedQuery {
+    /// Documentation search events.
+    SearchResultsLoaded {
         query: String,
+        results: Vec<crate::search::SearchResult>,
     },
-    SearchExecute {
-        query: String,
-    },
-    SearchFetch,
-    /// Search results fetched and summarized as markdown.
-    SearchDone {
+    SearchDocumentLoaded {
+        url: String,
+        title: String,
         markdown: String,
+        from_cache: bool,
     },
     SearchError {
         msg: String,
@@ -79,8 +74,12 @@ pub enum AppEvent {
         topics: Vec<String>,
     },
 
-    /// Model list from `/api/tags`.
+    /// Model list from `/api/tags` or cloud providers.
     ModelsLoaded(Vec<String>),
+    ProviderModelsLoaded {
+        provider: String,
+        models: Vec<String>,
+    },
 
 
     /// Add/remove a busy-job marker (drives the spinner).

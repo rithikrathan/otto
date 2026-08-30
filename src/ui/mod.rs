@@ -9,7 +9,7 @@ pub mod theme;
 
 use ratatui::layout::Rect;
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Paragraph, Tabs};
+use ratatui::widgets::Paragraph;
 use ratatui::Frame;
 
 use crate::app::{App, JobKind};

@@ -71,36 +71,38 @@ async fn run(
 
     let mut tick = interval(Duration::from_millis(80));
 
-    // Prime the model list on startup (background).
-    let ollama = ollama::Ollama::new(config.server.url.clone());
-    let tx2 = tx.clone();
-    tokio::spawn(async move {
-        match ollama.list_models().await {
-            Ok(models) => {
-                let _ = tx2.send(AppEvent::ModelsLoaded(
-                    models.into_iter().map(|m| m.name).collect(),
-                ));
+    app.init_from_config(config);
+
+    // Prime all provider model lists concurrently on startup.
+    let providers_to_fetch = vec!["ollama", "groq", "gemini", "nvidia"];
+    for prov in providers_to_fetch {
+        let tx_p = tx.clone();
+        let p_str = prov.to_string();
+        let url = config.resolve_url(&p_str);
+        let api_key = config.resolve_api_key(&p_str);
+        let c = ollama::Ollama::new(p_str.clone(), url, api_key);
+        tokio::spawn(async move {
+            if let Ok(models) = c.list_models().await {
+                let names: Vec<String> = models.into_iter().map(|m| m.name).collect();
+                if !names.is_empty() {
+                    let _ = tx_p.send(AppEvent::ProviderModelsLoaded {
+                        provider: p_str,
+                        models: names,
+                    });
+                }
             }
-            Err(e) => {
-                let _ = tx2.send(AppEvent::ModelsLoaded(Vec::new()));
-                let _ = tx2.send(AppEvent::ChatError {
-                    buffer: crate::buffers::BufferId::Chat,
-                    msg: format!("ollama: {e}"),
-                });
-            }
-        }
-    });
+        });
+    }
     
     // Periodically check server connection status
     let tx_conn = tx.clone();
-    let url_conn = config.server.url.clone();
+    let conn_client = ollama::Ollama::from_config(config);
     tokio::spawn(async move {
-        let client = reqwest::Client::new();
         loop {
-            let res = client.get(format!("{}/api/tags", url_conn)).send().await;
-            let connected = res.is_ok();
+            let models = conn_client.list_models().await;
+            let connected = models.is_ok();
             let _ = tx_conn.send(AppEvent::ConnectionStatus(connected));
-            tokio::time::sleep(Duration::from_secs(3)).await;
+            tokio::time::sleep(Duration::from_secs(4)).await;
         }
     });
 
@@ -153,9 +155,6 @@ async fn run(
                     }
 
                     Some(other) => {
-                        if let AppEvent::SearchExecute { query } = &other {
-                            execute_search(app, query, &tx, config);
-                        }
                         app.handle_event(other);
                     }
                     None => break,
@@ -196,6 +195,9 @@ fn handle_key(
         }
         _ if app.active_buffer() == crate::buffers::BufferId::Chtsh => {
             return handle_chtsh_key(app, key, tx, config);
+        }
+        _ if app.active_buffer() == crate::buffers::BufferId::Search => {
+            return handle_search_key(app, key, tx, config);
         }
         KeyCode::F(1) => {
             app.open_modal(app::Modal::Help);
@@ -336,7 +338,7 @@ fn handle_modal_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
     tx: &EventSender,
-    _config: &mut config::Config,
+    config: &mut config::Config,
 ) -> Result<()> {
     if app.modal_search_focused {
         match key.code {
@@ -346,6 +348,11 @@ fn handle_modal_key(
             KeyCode::Enter => {
                 app.modal_search_focused = false;
                 if let Some(ev) = app.modal_apply() {
+                    config.server.provider = app.provider_name.clone();
+                    config.model.name = app.model_name.clone();
+                    config.server.url = config.resolve_url(&app.provider_name);
+                    config.server.api_key = config.resolve_api_key(&app.provider_name);
+                    let _ = config.save();
                     let _ = tx.send(ev);
                 }
             }
@@ -369,8 +376,24 @@ fn handle_modal_key(
     }
 
     match key.code {
-        KeyCode::Esc | KeyCode::Tab | KeyCode::BackTab => {
+        KeyCode::Esc => {
             app.close_modal();
+            Ok(())
+        }
+        KeyCode::Left | KeyCode::Char('h') if app.modal == Some(app::Modal::ModelPicker) => {
+            app.modal_prev_provider();
+            Ok(())
+        }
+        KeyCode::Right | KeyCode::Char('l') if app.modal == Some(app::Modal::ModelPicker) => {
+            app.modal_next_provider();
+            Ok(())
+        }
+        KeyCode::Tab if app.modal == Some(app::Modal::ModelPicker) => {
+            app.modal_next_provider();
+            Ok(())
+        }
+        KeyCode::BackTab if app.modal == Some(app::Modal::ModelPicker) => {
+            app.modal_prev_provider();
             Ok(())
         }
         KeyCode::Char('.') if app.modal == Some(app::Modal::ModelPicker) => {
@@ -386,8 +409,12 @@ fn handle_modal_key(
             Ok(())
         }
         KeyCode::Enter => {
-            // Applying an async job (e.g. switching models) is sync here.
             if let Some(ev) = app.modal_apply() {
+                config.server.provider = app.provider_name.clone();
+                config.model.name = app.model_name.clone();
+                config.server.url = config.resolve_url(&app.provider_name);
+                config.server.api_key = config.resolve_api_key(&app.provider_name);
+                let _ = config.save();
                 let _ = tx.send(ev);
             }
             Ok(())
@@ -408,34 +435,34 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &mut config::Con
     if text.trim().is_empty() {
         return Ok(());
     }
-    app.history_push(&text);
 
-    if let Some(cmd) = cmd::parse(&text) {
-        return match cmd {
+    app.history_push(&text);
+    app.prompt.reset();
+
+    // Check if the prompt starts with a command prefix.
+    if let Some(c) = cmd::parse(&text) {
+        return match c {
             cmd::Command::Clear => {
-                app.chat.clear();
-                app.tokens.reset();
+                match app.active_buffer() {
+                    crate::buffers::BufferId::Chat => app.chat.clear(),
+                    crate::buffers::BufferId::Search => app.search.clear(),
+                    crate::buffers::BufferId::Chtsh => app.chtsh.clear(),
+                }
                 Ok(())
             }
-            cmd::Command::Model(m) if !m.is_empty() => {
-                app.model_name = m;
-                Ok(())
-            }
-            cmd::Command::Model(_) => {
-                // `/model` with no arg: open the floating model picker.
-                app.open_modal(app::Modal::ModelPicker);
+            cmd::Command::Model(arg) => {
+                if arg.is_empty() {
+                    app.open_modal(app::Modal::ModelPicker);
+                } else {
+                    app.model_name = arg.clone();
+                    app.settings.model = arg.clone();
+                    config.model.name = arg;
+                    let _ = config.save();
+                }
                 Ok(())
             }
             cmd::Command::Settings => {
                 app.open_modal(app::Modal::Settings);
-                Ok(())
-            }
-            cmd::Command::Help => {
-                app.open_modal(app::Modal::Help);
-                Ok(())
-            }
-            cmd::Command::SearchProvider(provider) => {
-                app.settings.search_provider = provider;
                 Ok(())
             }
             cmd::Command::Quit => {
@@ -483,7 +510,11 @@ fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &mut config::Co
     app.chat.add_user(text);
     app.busy.push(app::JobKind::Chat);
 
-    let ollama = ollama::Ollama::new(config.server.url.clone());
+    let provider = app.provider_name.clone();
+    let url = config.resolve_url(&provider);
+    let api_key = config.resolve_api_key(&provider);
+    let client = ollama::Ollama::new(provider, url, api_key);
+
     let model = app.model_name.clone();
     let history: Vec<ollama::ChatMessage> = app
         .chat
@@ -496,7 +527,7 @@ fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &mut config::Co
         .collect();
     let tx = tx.clone();
     let handle = tokio::spawn(async move {
-        match ollama.stream_chat(&model, &history, &tx).await {
+        match client.stream_chat(&model, &history, &tx).await {
             Ok(()) => {
                 let _ = tx.send(AppEvent::ChatDone {
                     buffer: crate::buffers::BufferId::Chat,
@@ -514,95 +545,262 @@ fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &mut config::Co
     Ok(())
 }
 
-/// Kick off a search: ask the model for a query plan, and show a picker modal.
+/// Kick off a documentation search: hybrid SQLite FTS5 + remote provider.
 fn trigger_search(
     app: &mut App,
-    text: &str,
+    query: &str,
     tx: &EventSender,
     config: &mut config::Config,
 ) -> Result<()> {
-    app.search.last_query = Some(text.to_string());
-    app.open_modal(app::Modal::SearchQueryPicker(vec![text.to_string()]));
-    app.busy.push(app::JobKind::SearchPlan);
+    let clean_query = query.trim().to_string();
+    if clean_query.is_empty() {
+        return Ok(());
+    }
+    app.search.last_query = Some(clean_query.clone());
+    app.busy.push(app::JobKind::SearchFetch);
 
-    let ollama = ollama::Ollama::new(config.server.url.clone());
-    let model = app.model_name.clone();
-    let prompt = text.to_string();
     let tx = tx.clone();
-    
+    let q = clean_query.clone();
+    let sources = search::Source::from_config(config);
+    let max_results = config.search.max_results;
+
     let handle = tokio::spawn(async move {
-        // Phase 1: model produces the actual search query.
-        let plan = plan_search(&ollama, &model, &prompt).await;
-        match plan {
-            Ok(plan_val) => {
-                let mut query = plan_val
-                    .get("query")
-                    .and_then(|q| q.as_str())
-                    .map(String::from)
-                    .unwrap_or_else(|| prompt.clone());
-                if query == prompt {
-                    query = format!("{} (AI)", query);
-                } else {
-                    query = format!("✨ {}", query);
-                }
-                let _ = tx.send(AppEvent::SearchRefinedQuery { query });
+        let doc_store = match search::DocStore::open_default() {
+            Ok(store) => store,
+            Err(e) => {
+                let _ = tx.send(AppEvent::MarkBusy {
+                    job: app::JobKind::SearchFetch,
+                    on: false,
+                });
+                let _ = tx.send(AppEvent::SearchError { msg: e.to_string() });
+                return;
+            }
+        };
+
+        let provider = search::DuckDuckGoDocsProvider::new();
+
+        match search::hybrid_search(&q, &doc_store, &provider, &sources, max_results).await {
+            Ok(results) => {
+                let _ = tx.send(AppEvent::MarkBusy {
+                    job: app::JobKind::SearchFetch,
+                    on: false,
+                });
+                let _ = tx.send(AppEvent::SearchResultsLoaded {
+                    query: q,
+                    results,
+                });
             }
             Err(e) => {
-                let query = format!("{} (AI Failed: {})", prompt, e);
-                let _ = tx.send(AppEvent::SearchRefinedQuery { query });
+                let _ = tx.send(AppEvent::MarkBusy {
+                    job: app::JobKind::SearchFetch,
+                    on: false,
+                });
+                let _ = tx.send(AppEvent::SearchError { msg: e.to_string() });
             }
         }
-        let _ = tx.send(AppEvent::MarkBusy {
-            job: app::JobKind::SearchPlan,
-            on: false,
-        });
     });
     app.bg_task = Some(handle);
     Ok(())
 }
 
-fn execute_search(
+/// Open and render a specific documentation URL from cache or remote HTML extraction.
+fn trigger_open_document(
     app: &mut App,
-    query: &str,
+    url: &str,
     tx: &EventSender,
-    config: &mut config::Config,
-) {
+    config: &config::Config,
+) -> Result<()> {
+    let target_url = url.trim().to_string();
+    if target_url.is_empty() {
+        return Ok(());
+    }
     app.busy.push(app::JobKind::SearchFetch);
-    let ollama = ollama::Ollama::new(config.server.url.clone());
-    let model = app.model_name.clone();
-    let summarize = config.search.summarize;
-    let provider = app.settings.search_provider.clone();
-    let tx = tx.clone();
-    let query_str = query.to_string();
 
+    let tx = tx.clone();
+    let u = target_url.clone();
+    let sources = search::Source::from_config(config);
     let handle = tokio::spawn(async move {
-        // Phase 2: run the provider query.
-        let results = search::search(&provider, &query_str).await;
-        let (results, err) = match results {
-            Ok(r) => (r, None),
-            Err(e) => (Vec::new(), Some(e.to_string())),
+        let doc_store = match search::DocStore::open_default() {
+            Ok(store) => store,
+            Err(e) => {
+                let _ = tx.send(AppEvent::MarkBusy {
+                    job: app::JobKind::SearchFetch,
+                    on: false,
+                });
+                let _ = tx.send(AppEvent::SearchError { msg: e.to_string() });
+                return;
+            }
         };
 
-        // Phase 3: summarize (optional) into concise markdown.
-        let mut md = search::results_to_markdown(&results);
-        if summarize && !results.is_empty() {
-            if let Ok(sum) = summarize_results(&ollama, &model, &query_str, &md).await {
-                md = sum;
+        match search::fetch_and_process_document(&u, &doc_store, &sources).await {
+            Ok((doc, from_cache)) => {
+                let _ = tx.send(AppEvent::MarkBusy {
+                    job: app::JobKind::SearchFetch,
+                    on: false,
+                });
+                let _ = tx.send(AppEvent::SearchDocumentLoaded {
+                    url: doc.url,
+                    title: doc.title,
+                    markdown: doc.markdown,
+                    from_cache,
+                });
             }
-        }
-
-        let _ = tx.send(AppEvent::MarkBusy {
-            job: app::JobKind::SearchFetch,
-            on: false,
-        });
-        if let Some(err) = err {
-            let _ = tx.send(AppEvent::SearchError { msg: err });
-        } else {
-            let final_md = format!("**Search:** `{query_str}` (Provider: {provider})\n\n{md}");
-            let _ = tx.send(AppEvent::SearchDone { markdown: final_md });
+            Err(e) => {
+                let _ = tx.send(AppEvent::MarkBusy {
+                    job: app::JobKind::SearchFetch,
+                    on: false,
+                });
+                let _ = tx.send(AppEvent::SearchError { msg: e.to_string() });
+            }
         }
     });
     app.bg_task = Some(handle);
+    Ok(())
+}
+
+fn handle_search_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+    tx: &EventSender,
+    config: &mut config::Config,
+) -> Result<()> {
+    if app.prompt.is_empty() {
+        match key.code {
+            KeyCode::Up => {
+                app.search.prev_result();
+                return Ok(());
+            }
+            KeyCode::Down => {
+                app.search.next_result();
+                return Ok(());
+            }
+            KeyCode::Enter => {
+                if app.search.mode == buffers::search::SearchMode::Results {
+                    if let Some(item) = app.search.selected_item().cloned() {
+                        trigger_open_document(app, &item.url, tx, config)?;
+                        return Ok(());
+                    }
+                }
+            }
+            KeyCode::Esc | KeyCode::Char('b') => {
+                if app.search.back_to_results() {
+                    return Ok(());
+                }
+            }
+            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
+                if app.search.mode == buffers::search::SearchMode::Results {
+                    let idx = (c as usize) - ('1' as usize);
+                    if let Some(item) = app.search.results.get(idx).cloned() {
+                        app.search.selected_result = idx;
+                        app.search.render_results_view();
+                        trigger_open_document(app, &item.url, tx, config)?;
+                        return Ok(());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    match key.code {
+        KeyCode::Enter => {
+            if key.modifiers.contains(KeyModifiers::SHIFT) {
+                app.prompt.insert_char('\n');
+            } else {
+                submit(app, false, tx, config)?;
+            }
+            Ok(())
+        }
+        KeyCode::PageUp | KeyCode::PageDown => {
+            let delta = match key.code {
+                KeyCode::PageUp => -10i32,
+                _ => 10i32,
+            };
+            let _ = tx.send(AppEvent::MouseScroll { delta });
+            Ok(())
+        }
+        KeyCode::Tab => {
+            app.next_buffer();
+            Ok(())
+        }
+        KeyCode::BackTab => {
+            app.prev_buffer();
+            Ok(())
+        }
+        KeyCode::F(1) => {
+            app.open_modal(app::Modal::Help);
+            Ok(())
+        }
+        KeyCode::Char('?') if app.prompt.is_empty() => {
+            app.open_modal(app::Modal::Help);
+            Ok(())
+        }
+        KeyCode::Esc => {
+            if !app.prompt.is_empty() {
+                app.prompt.reset();
+            } else if app.search.back_to_results() {
+                // Back to results
+            }
+            Ok(())
+        }
+        KeyCode::Char('w') | KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.prompt.delete_word_backward();
+            Ok(())
+        }
+        KeyCode::Backspace => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.prompt.delete_word_backward();
+            } else {
+                app.prompt.delete_backward();
+            }
+            Ok(())
+        }
+        KeyCode::Delete => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.prompt.delete_word_forward();
+            } else {
+                app.prompt.delete_forward();
+            }
+            Ok(())
+        }
+        KeyCode::Left => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.prompt.move_word_backward();
+            } else {
+                app.prompt.move_left();
+            }
+            Ok(())
+        }
+        KeyCode::Right => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.prompt.move_word_forward();
+            } else {
+                app.prompt.move_right();
+            }
+            Ok(())
+        }
+        KeyCode::Up | KeyCode::Down => {
+            let before = app.prompt.cursor;
+            if key.code == KeyCode::Up {
+                app.prompt.move_up();
+            } else {
+                app.prompt.move_down();
+            }
+            if app.prompt.cursor == before {
+                if key.code == KeyCode::Up {
+                    app.history_back();
+                } else {
+                    app.history_forward();
+                }
+            }
+            Ok(())
+        }
+        _ => {
+            let width = app.prompt.width;
+            app.prompt.key(key.code, width);
+            Ok(())
+        }
+    }
 }
 
 fn handle_chtsh_key(
@@ -808,87 +1006,9 @@ fn trigger_chtsh(
     trigger_chtsh_direct(app, tx)
 }
 
-fn clean_json(text: &str) -> String {
-    let mut s = text.trim();
-    if s.starts_with("```json") {
-        s = &s[7..];
-    } else if s.starts_with("```") {
-        s = &s[3..];
-    }
-    if s.ends_with("```") {
-        s = &s[..s.len() - 3];
-    }
-    s.trim().to_string()
-}
-
-async fn plan_search(
-    ollama: &ollama::Ollama,
-    model: &str,
-    prompt: &str,
-) -> Result<serde_json::Value> {
-    let sys = "You are a search query refinement engine. Convert the user's intent into a highly optimized search query string. Do not answer the question; only produce the search query. Output JSON ONLY: {\"query\":\"...\"}".into();
-    let resp = ollama
-        .complete(
-            model,
-            vec![
-                ollama::ChatMessage {
-                    role: "system".into(),
-                    content: sys,
-                },
-                ollama::ChatMessage {
-                    role: "user".into(),
-                    content: prompt.to_string(),
-                },
-            ],
-        )
-        .await?;
-    let cleaned = clean_json(&resp.message.map(|m| m.content).unwrap_or_default());
-    let json: serde_json::Value = serde_json::from_str(&cleaned)?;
-    Ok(json)
-}
-
-fn extract_json(s: &str) -> &str {
-    let s = s.trim();
-    if let Some(start) = s.find('{') {
-        if let Some(end) = s.rfind('}') {
-            return &s[start..=end];
-        }
-    }
-    s
-}
 
 
-/// Summarize a raw result list into a concise, procedural markdown answer.
-async fn summarize_results(
-    ollama: &ollama::Ollama,
-    model: &str,
-    query: &str,
-    raw: &str,
-) -> Result<String> {
-    let sys = "You summarize web search results into a concise procedural markdown \
-help. Answer the user's question only using the supplied results. Cite sources as \
-markdown links. Be terse and structured."
-        .into();
-    let resp = ollama
-        .complete(
-            model,
-            vec![
-                ollama::ChatMessage {
-                    role: "system".into(),
-                    content: sys,
-                },
-                ollama::ChatMessage {
-                    role: "user".into(),
-                    content: format!("Search: {query}\n\nResults:\n{raw}"),
-                },
-            ],
-        )
-        .await?;
-    Ok(resp
-        .message
-        .map(|m| m.content)
-        .unwrap_or_else(|| raw.to_string()))
-}
+
 
 /// Export the current chat conversation as markdown.
 fn export_chat(app: &App, path: &str) -> Result<()> {
