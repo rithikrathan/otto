@@ -94,6 +94,8 @@ pub enum AppEvent {
         job: crate::app::JobKind,
         on: bool,
     },
+    /// Connection status to the server.
+    ConnectionStatus(bool),
 }
 
 /// Channel type used for UI events.

@@ -76,6 +76,12 @@ fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Them
         Span::raw(format!("out {}", w)),
         Span::styled(" · ", theme.muted()),
         Span::styled(format!("ctx {}", ctx), theme.muted()),
+        Span::styled(" · ", theme.muted()),
+        if app.is_connected {
+            Span::styled("●", ratatui::style::Style::default().fg(ratatui::style::Color::Green))
+        } else {
+            Span::styled("●", ratatui::style::Style::default().fg(ratatui::style::Color::Red))
+        },
     ]);
 
     // Right-align the stats block at the end of the statusline.

@@ -58,6 +58,8 @@ pub struct App {
     pub pending_abort: bool,
     /// Handle to the current background task (to allow abortion).
     pub bg_task: Option<tokio::task::JoinHandle<()>>,
+    /// Connection status to the server.
+    pub is_connected: bool,
 }
 
 /// Editable settings surfaced in the floating settings window.
@@ -113,6 +115,7 @@ impl App {
             running: true,
             pending_abort: false,
             bg_task: None,
+            is_connected: true,
         }
     }
 
@@ -275,6 +278,9 @@ impl App {
                 } else {
                     self.busy.retain(|j| *j != job);
                 }
+            }
+            AppEvent::ConnectionStatus(status) => {
+                self.is_connected = status;
             }
             AppEvent::SearchRefinedQuery { query } => {
                 if let Some(Modal::SearchQueryPicker(opts)) = &mut self.modal {

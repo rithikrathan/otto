@@ -93,7 +93,19 @@ async fn run(
             }
         }
     });
-
+    
+    // Periodically check server connection status
+    let tx_conn = tx.clone();
+    let url_conn = config.server.url.clone();
+    tokio::spawn(async move {
+        let client = reqwest::Client::new();
+        loop {
+            let res = client.get(format!("{}/api/tags", url_conn)).send().await;
+            let connected = res.is_ok();
+            let _ = tx_conn.send(AppEvent::ConnectionStatus(connected));
+            tokio::time::sleep(Duration::from_secs(3)).await;
+        }
+    });
     // Input reader streams key + mouse events into the same channel.
     let tx3 = tx.clone();
     tokio::spawn(async move {

@@ -111,7 +111,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         };
         let sb = Block::default()
             .borders(Borders::ALL)
-            .title(" search (.) ")
+            .title(" search (press '.' to focus) ")
             .title_style(style)
             .border_style(style);
         
@@ -126,7 +126,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
     // Footer with key hints.
     let hint = match &modal {
-        Modal::ModelPicker => " . search   ↑/↓ move   Enter select   Esc close ",
+        Modal::ModelPicker => " . focus search   ↑/↓ move   Enter select   Esc close ",
         Modal::Settings => " ↑/↓ move   Enter toggle/select   Esc close ",
         Modal::SearchQueryPicker(_) => " ↑/↓ move   Enter execute search   Esc close ",
     };
