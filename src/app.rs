@@ -83,7 +83,7 @@ pub enum Modal {
 impl App {
     pub fn new() -> Self {
         let tabs = vec![BufferId::Chat, BufferId::Search, BufferId::Chtsh];
-        Self {
+        let mut app = Self {
             tabs,
             active: 0,
             focus: Focus::Prompt,
@@ -113,7 +113,9 @@ impl App {
             pending_abort: false,
             bg_task: None,
             is_connected: true,
-        }
+        };
+        app.chtsh.refresh_suggestions();
+        app
     }
 
     /// Move to the next buffer (Tab).

@@ -406,15 +406,40 @@ impl ChtshBuffer {
             ChtshFocus::Scope => {
                 if !self.scope.is_empty() {
                     self.suggestions = fuzzy_suggest(&self.root_list, self.scope.value(), 5);
+                } else if !self.root_list.is_empty() {
+                    let popular = ["rust", "python", "go", "c", "cpp", "bash", "git", "docker"];
+                    let mut sample: Vec<String> = popular
+                        .iter()
+                        .filter(|&&s| self.root_list.iter().any(|r| r.eq_ignore_ascii_case(s)))
+                        .map(|&s| s.to_string())
+                        .collect();
+                    if sample.is_empty() {
+                        sample = self.root_list.iter().take(5).cloned().collect();
+                    }
+                    self.suggestions = sample;
                 } else {
-                    self.suggestions.clear();
+                    self.suggestions = vec![
+                        "rust".into(),
+                        "python".into(),
+                        "go".into(),
+                        "c".into(),
+                        "bash".into(),
+                    ];
                 }
             }
             ChtshFocus::Query => {
                 if !self.topic_list.is_empty() && !self.query.is_empty() {
                     self.suggestions = fuzzy_suggest(&self.topic_list, self.query.value(), 5);
+                } else if !self.topic_list.is_empty() {
+                    let mut sample = vec![":learn".to_string(), ":list".to_string()];
+                    for item in self.topic_list.iter().take(4) {
+                        if !sample.contains(item) {
+                            sample.push(item.clone());
+                        }
+                    }
+                    self.suggestions = sample;
                 } else {
-                    self.suggestions.clear();
+                    self.suggestions = vec![":learn".into(), ":list".into(), "hello world".into()];
                 }
             }
         }

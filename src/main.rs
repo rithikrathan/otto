@@ -674,7 +674,7 @@ fn handle_chtsh_key(
             app.chtsh.delete_word_backward();
             return Ok(());
         }
-        KeyCode::Backspace | KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Backspace => {
             if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
                 app.chtsh.delete_word_backward();
             } else {
@@ -682,12 +682,20 @@ fn handle_chtsh_key(
             }
             return Ok(());
         }
-        KeyCode::Delete | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.chtsh.delete_backward();
+            return Ok(());
+        }
+        KeyCode::Delete => {
             if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
                 app.chtsh.delete_word_forward();
             } else {
                 app.chtsh.delete_forward();
             }
+            return Ok(());
+        }
+        KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.chtsh.delete_forward();
             return Ok(());
         }
         KeyCode::Up => {
