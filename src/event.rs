@@ -73,6 +73,11 @@ pub enum AppEvent {
     ChtshError {
         msg: String,
     },
+    ChtshRootLoaded(Vec<String>),
+    ChtshTopicLoaded {
+        lang: String,
+        topics: Vec<String>,
+    },
 
     /// Model list from `/api/tags`.
     ModelsLoaded(Vec<String>),

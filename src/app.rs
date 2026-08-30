@@ -252,6 +252,17 @@ impl App {
                 self.remove_job(JobKind::ChtshFetch);
                 self.remove_job(JobKind::ChtshPlan);
             }
+            AppEvent::ChtshRootLoaded(list) => {
+                self.chtsh.root_list = list;
+                self.chtsh.refresh_suggestions();
+            }
+            AppEvent::ChtshTopicLoaded { lang, topics } => {
+                if self.chtsh.scope.eq_ignore_ascii_case(&lang) {
+                    self.chtsh.topic_list = topics;
+                    self.chtsh.last_topic_scope = Some(lang);
+                    self.chtsh.refresh_suggestions();
+                }
+            }
             AppEvent::SearchPlan { .. } | AppEvent::ChtshPlan { .. } => {}
             AppEvent::MarkBusy { job, on } => {
                 if on {

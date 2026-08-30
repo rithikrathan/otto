@@ -103,6 +103,15 @@ async fn run(
             tokio::time::sleep(Duration::from_secs(3)).await;
         }
     });
+
+    // Load cht.sh root list into cache/app on startup
+    let tx_chtsh = tx.clone();
+    tokio::spawn(async move {
+        let client = chtsh::ChtShClient::new();
+        if let Ok(list) = client.fetch_root_list().await {
+            let _ = tx_chtsh.send(AppEvent::ChtshRootLoaded(list));
+        }
+    });
     // Input reader streams key + mouse events into the same channel.
     let tx3 = tx.clone();
     tokio::spawn(async move {
@@ -184,6 +193,9 @@ fn handle_key(
         // A floating window has focus: route keys to it.
         _ if app.modal.is_some() => {
             return handle_modal_key(app, key, tx, config);
+        }
+        _ if app.active_buffer() == crate::buffers::BufferId::Chtsh => {
+            return handle_chtsh_key(app, key, tx, config);
         }
         KeyCode::Esc => {
             if !app.prompt.is_empty() {
@@ -590,55 +602,129 @@ fn execute_search(
     app.bg_task = Some(handle);
 }
 
-/// Kick off a cht.sh query: ask the model for the URL, then fetch.
-fn trigger_chtsh(
+fn handle_chtsh_key(
     app: &mut App,
-    text: &str,
+    key: crossterm::event::KeyEvent,
     tx: &EventSender,
-    config: &mut config::Config,
+    _config: &mut config::Config,
 ) -> Result<()> {
-    app.chtsh.last_query = Some(text.to_string());
-    app.busy.push(app::JobKind::ChtshPlan);
-
-    let ollama = ollama::Ollama::new(config.server.url.clone());
-    let model = app.model_name.clone();
-    let prompt = text.to_string();
-    let tx = tx.clone();
-    let handle = tokio::spawn(async move {
-        let plan = plan_chtsh(&ollama, &model, &prompt).await;
-        let planval = match plan {
-            Ok(v) => v,
-            Err(e) => {
-                let _ = tx.send(AppEvent::MarkBusy {
-                    job: app::JobKind::ChtshPlan,
-                    on: false,
+    match key.code {
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.running = false;
+            return Ok(());
+        }
+        KeyCode::Char('q') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.running = false;
+            return Ok(());
+        }
+        KeyCode::BackTab => {
+            app.prev_buffer();
+            return Ok(());
+        }
+        KeyCode::Tab if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.next_buffer();
+            return Ok(());
+        }
+        KeyCode::Esc => {
+            app.chtsh.query.clear();
+            app.chtsh.refresh_suggestions();
+            return Ok(());
+        }
+        KeyCode::Tab | KeyCode::Left | KeyCode::Right => {
+            app.chtsh.toggle_focus();
+            return Ok(());
+        }
+        KeyCode::Up => {
+            app.chtsh.prev_suggestion();
+            return Ok(());
+        }
+        KeyCode::Down => {
+            app.chtsh.next_suggestion();
+            return Ok(());
+        }
+        KeyCode::Char(' ') => {
+            let old_scope = app.chtsh.scope.clone();
+            app.chtsh.accept_suggestion();
+            if app.chtsh.scope != old_scope && !app.chtsh.scope.is_empty() {
+                let scope = app.chtsh.scope.clone();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let client = chtsh::ChtShClient::new();
+                    if let Ok(topics) = client.fetch_topic_list(&scope).await {
+                        let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: scope, topics });
+                    }
                 });
-                let _ = tx.send(AppEvent::ChtshError { msg: e.to_string() });
-                return;
             }
-        };
-        let chtsh_plan = chtsh::ChtshPlan {
-            topic: planval
-                .get("topic")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
-            query: planval
-                .get("query")
-                .and_then(|v| v.as_str())
-                .unwrap_or(&prompt)
-                .to_string(),
-        };
-        let url = chtsh::build_url(&chtsh_plan);
-        let _ = tx.send(AppEvent::MarkBusy {
-            job: app::JobKind::ChtshPlan,
-            on: false,
-        });
-        let _ = tx.send(AppEvent::MarkBusy {
-            job: app::JobKind::ChtshFetch,
-            on: true,
-        });
-        match chtsh::fetch(&url).await {
+            return Ok(());
+        }
+        KeyCode::Enter => {
+            trigger_chtsh_direct(app, tx)?;
+            return Ok(());
+        }
+        KeyCode::Backspace => {
+            app.chtsh.backspace();
+            if app.chtsh.focus == buffers::chtsh::ChtshFocus::Scope && !app.chtsh.scope.is_empty() {
+                let scope = app.chtsh.scope.clone();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let client = chtsh::ChtShClient::new();
+                    if let Ok(topics) = client.fetch_topic_list(&scope).await {
+                        let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: scope, topics });
+                    }
+                });
+            }
+            return Ok(());
+        }
+        KeyCode::Char(c) => {
+            app.chtsh.insert_char(c);
+            if app.chtsh.focus == buffers::chtsh::ChtshFocus::Scope && !app.chtsh.scope.is_empty() {
+                let scope = app.chtsh.scope.clone();
+                let tx = tx.clone();
+                tokio::spawn(async move {
+                    let client = chtsh::ChtShClient::new();
+                    if let Ok(topics) = client.fetch_topic_list(&scope).await {
+                        let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: scope, topics });
+                    }
+                });
+            }
+            return Ok(());
+        }
+        KeyCode::PageUp | KeyCode::PageDown => {
+            let delta = match key.code {
+                KeyCode::PageUp => -10i32,
+                _ => 10i32,
+            };
+            let _ = tx.send(AppEvent::MouseScroll { delta });
+            return Ok(());
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn trigger_chtsh_direct(app: &mut App, tx: &EventSender) -> Result<()> {
+    let scope = app.chtsh.scope.trim().to_string();
+    if scope.is_empty() {
+        return Ok(());
+    }
+    let query = app.chtsh.query.trim().to_string();
+    let display_query = if query.is_empty() {
+        scope.clone()
+    } else {
+        format!("{scope}/{query}")
+    };
+    app.chtsh.last_query = Some(display_query);
+
+    let _ = tx.send(AppEvent::MarkBusy {
+        job: app::JobKind::ChtshFetch,
+        on: true,
+    });
+
+    let tx = tx.clone();
+    let query_opt = if query.is_empty() { None } else { Some(query) };
+    let handle = tokio::spawn(async move {
+        let client = chtsh::ChtShClient::new();
+        match client.fetch_sheet(&scope, query_opt.as_deref()).await {
             Ok(text) => {
                 let _ = tx.send(AppEvent::MarkBusy {
                     job: app::JobKind::ChtshFetch,
@@ -657,6 +743,15 @@ fn trigger_chtsh(
     });
     app.bg_task = Some(handle);
     Ok(())
+}
+
+fn trigger_chtsh(
+    app: &mut App,
+    _text: &str,
+    tx: &EventSender,
+    _config: &mut config::Config,
+) -> Result<()> {
+    trigger_chtsh_direct(app, tx)
 }
 
 fn clean_json(text: &str) -> String {
@@ -708,31 +803,6 @@ fn extract_json(s: &str) -> &str {
     s
 }
 
-async fn plan_chtsh(
-    ollama: &ollama::Ollama,
-    model: &str,
-    prompt: &str,
-) -> Result<serde_json::Value> {
-    let sys = "You are a cht.sh query engine. Parse the user's intent into a `topic` (the language or tool, e.g. 'rust', 'python', 'docker') and a `query` (the question or command). Output JSON ONLY: {\"topic\":\"...\", \"query\":\"...\"}".into();
-    let resp = ollama
-        .complete(
-            model,
-            vec![
-                ollama::ChatMessage {
-                    role: "system".into(),
-                    content: sys,
-                },
-                ollama::ChatMessage {
-                    role: "user".into(),
-                    content: prompt.to_string(),
-                },
-            ],
-        )
-        .await?;
-    let cleaned = clean_json(&resp.message.map(|m| m.content).unwrap_or_default());
-    let json: serde_json::Value = serde_json::from_str(&cleaned)?;
-    Ok(json)
-}
 
 /// Summarize a raw result list into a concise, procedural markdown answer.
 async fn summarize_results(
