@@ -216,9 +216,31 @@ fn parse_markdown(doc: &str, theme: &theme::Theme, width: u16) -> ratatui::text:
                 }
                 lines.push(Line::from(Span::styled(top, theme.muted())));
 
+                let lang_clean = code_lang.to_lowercase();
                 let ps = get_syntax_set();
                 let theme = get_ephemera_theme();
-                let syntax = ps.find_syntax_by_token(&code_lang).unwrap_or_else(|| ps.find_syntax_plain_text());
+                let syntax = ps
+                    .find_syntax_by_token(&lang_clean)
+                    .or_else(|| ps.find_syntax_by_extension(&lang_clean))
+                    .or_else(|| ps.find_syntax_by_name(&code_lang))
+                    .or_else(|| match lang_clean.as_str() {
+                        "rs" | "rust" => ps.find_syntax_by_extension("rs"),
+                        "py" | "python" | "python3" => ps.find_syntax_by_extension("py"),
+                        "js" | "javascript" => ps.find_syntax_by_extension("js"),
+                        "ts" | "typescript" => ps.find_syntax_by_extension("ts"),
+                        "c" => ps.find_syntax_by_extension("c"),
+                        "cpp" | "c++" | "cxx" => ps.find_syntax_by_extension("cpp"),
+                        "go" | "golang" => ps.find_syntax_by_extension("go"),
+                        "sh" | "bash" | "zsh" | "shell" => ps.find_syntax_by_extension("sh"),
+                        "toml" => ps.find_syntax_by_extension("toml"),
+                        "json" => ps.find_syntax_by_extension("json"),
+                        "yaml" | "yml" => ps.find_syntax_by_extension("yaml"),
+                        "sql" => ps.find_syntax_by_extension("sql"),
+                        "html" => ps.find_syntax_by_extension("html"),
+                        "css" => ps.find_syntax_by_extension("css"),
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| ps.find_syntax_plain_text());
                 highlighter = Some(syntect::easy::HighlightLines::new(syntax, theme));
             }
             continue;

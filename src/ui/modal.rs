@@ -38,6 +38,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::ModelPicker => (" model picker ", app.modal_rows()),
         Modal::Settings => (" settings ", app.modal_rows()),
         Modal::SearchQueryPicker(_) => (" select query ", app.modal_rows()),
+        Modal::Help => (" keyboard shortcuts & help ", app.modal_rows()),
     };
 
     let block = Block::default()
@@ -129,6 +130,7 @@ pub fn draw(frame: &mut Frame, app: &App) {
         Modal::ModelPicker => " . focus search   ↑/↓ move   Enter select   Esc close ",
         Modal::Settings => " ↑/↓ move   Enter toggle/select   Esc close ",
         Modal::SearchQueryPicker(_) => " ↑/↓ move   Enter execute search   Esc close ",
+        Modal::Help => " ↑/↓ scroll   Esc / Enter close ",
     };
     let fh = Rect::new(
         list_rect.x,
@@ -141,14 +143,14 @@ pub fn draw(frame: &mut Frame, app: &App) {
 
 /// Height of the modal window based on its content.
 fn modal_height(app: &App) -> u16 {
-    let mut extra = 0;
     let rows = match &app.modal {
         Some(Modal::ModelPicker) => app.filtered_models().len(),
         Some(Modal::Settings) => crate::app::settings_rows(),
         Some(Modal::SearchQueryPicker(opts)) => opts.len(),
+        Some(Modal::Help) => 16,
         None => 0,
     };
-    (rows as u16 + 3 + extra).clamp(6, 24)
+    (rows as u16 + 3).clamp(6, 22)
 }
 
 /// The area inside a bordered window (excludes the border).

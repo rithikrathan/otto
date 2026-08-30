@@ -77,6 +77,7 @@ pub enum Modal {
     ModelPicker,
     Settings,
     SearchQueryPicker(Vec<String>),
+    Help,
 }
 
 impl App {
@@ -257,7 +258,7 @@ impl App {
                 self.chtsh.refresh_suggestions();
             }
             AppEvent::ChtshTopicLoaded { lang, topics } => {
-                if self.chtsh.scope.eq_ignore_ascii_case(&lang) {
+                if self.chtsh.scope.value().eq_ignore_ascii_case(&lang) {
                     self.chtsh.topic_list = topics;
                     self.chtsh.last_topic_scope = Some(lang);
                     self.chtsh.refresh_suggestions();
@@ -385,6 +386,7 @@ impl App {
             Some(Modal::ModelPicker) => self.filtered_models().len(),
             Some(Modal::Settings) => settings_rows(),
             Some(Modal::SearchQueryPicker(opts)) => opts.len(),
+            Some(Modal::Help) => 16,
             None => 0,
         };
         if len == 0 {
@@ -410,6 +412,7 @@ impl App {
             Some(Modal::ModelPicker) => self.models.get(self.modal_index).cloned(),
             Some(Modal::Settings) => settings_row_label(self.modal_index).map(|s| s.to_string()),
             Some(Modal::SearchQueryPicker(opts)) => opts.get(self.modal_index).cloned(),
+            Some(Modal::Help) => None,
             None => None,
         }
     }
@@ -440,6 +443,29 @@ impl App {
             Some(Modal::SearchQueryPicker(opts)) => {
                 for (i, opt) in opts.iter().enumerate() {
                     out.push((opt.clone(), "".to_string(), i == self.modal_index));
+                }
+            }
+            Some(Modal::Help) => {
+                let help_entries = [
+                    ("Tab / BackTab", "Switch buffer (Chat / Search / Chtsh)"),
+                    ("? / /help", "Toggle this help window"),
+                    ("Enter", "Submit / Fetch / Select"),
+                    ("Shift+Enter", "Insert newline in prompt"),
+                    ("Ctrl+K", "Clear chat context"),
+                    ("/settings", "Open settings"),
+                    ("/model", "Open model picker"),
+                    ("Ctrl+Left / Right", "Move word backward / forward"),
+                    ("Ctrl+W / Ctrl+Bksp", "Delete word backward"),
+                    ("Ctrl+Delete", "Delete word forward"),
+                    ("Up / Down", "History / suggestions / modal nav"),
+                    ("Space (in cht.sh)", "Accept highlighted suggestion"),
+                    ("Left/Right (in cht.sh)", "Navigate & switch Scope/Query"),
+                    ("PageUp / PageDown", "Scroll buffer"),
+                    ("Esc", "Close modal / cancel running task"),
+                    ("Ctrl+Q / Ctrl+C", "Quit application"),
+                ];
+                for (i, (key, desc)) in help_entries.iter().enumerate() {
+                    out.push((key.to_string(), desc.to_string(), i == self.modal_index));
                 }
             }
             None => {}
@@ -483,6 +509,10 @@ impl App {
                         .to_string();
                     return Some(AppEvent::SearchExecute { query: clean_q });
                 }
+                self.close_modal();
+                Some(AppEvent::Tick)
+            }
+            Some(Modal::Help) => {
                 self.close_modal();
                 Some(AppEvent::Tick)
             }

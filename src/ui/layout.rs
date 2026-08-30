@@ -15,21 +15,18 @@ pub fn prompt_height(prompt: &Prompt) -> u16 {
 }
 
 /// The vertical chunks for `area`.
-pub fn chunks(area: Rect, prompt: &Prompt) -> [Rect; 4] {
-    // min terminal gate: need at least status(1)+prompt(1)+bottom(1)+1
+pub fn chunks(area: Rect, prompt: &Prompt) -> [Rect; 3] {
     let prompt_h = prompt_height(prompt);
     let rows = Layout::vertical([
         Constraint::Min(1),               // buffer area
         Constraint::Length(1),            // separator statusline
         Constraint::Length(prompt_h + 2), // prompt box (borders + content)
-        Constraint::Length(1),            // bottom statusline
     ])
     .split(area);
     [
         rows[0], // 0 buffer
         rows[1], // 1 status
         rows[2], // 2 prompt
-        rows[3], // 3 bottom
     ]
 }
 

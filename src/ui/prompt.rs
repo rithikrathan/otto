@@ -92,35 +92,19 @@ pub fn draw(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     }
 }
 
-/// 3-Line TUI Component strictly conforming to cht.sh architecture.
+/// Compact input component for cht.sh.
 fn draw_chtsh_input(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme) {
     use crate::buffers::chtsh::ChtshFocus;
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // Line 1: Status & Keybindings
-            Constraint::Length(1), // Line 2: Scope and Query inputs
-            Constraint::Length(1), // Line 3: Fuzzy suggestions
+            Constraint::Length(1), // Line 1: Scope and Query inputs
+            Constraint::Length(1), // Line 2: Fuzzy suggestions
         ])
         .split(area);
 
-    // Line 1 (Status): Keybindings & state
-    let line1 = Line::from(vec![
-        Span::styled(" [Tab/←/→] ", theme.accent()),
-        Span::styled("Switch ", theme.muted()),
-        Span::styled("│ [↑/↓] ", theme.accent()),
-        Span::styled("Select ", theme.muted()),
-        Span::styled("│ [Space] ", theme.accent()),
-        Span::styled("Accept ", theme.muted()),
-        Span::styled("│ [Enter] ", theme.accent()),
-        Span::styled("Fetch ", theme.muted()),
-        Span::styled("│ [Ctrl+Tab] ", theme.accent()),
-        Span::styled("Next Tab", theme.muted()),
-    ]);
-    frame.render_widget(Paragraph::new(line1), chunks[0]);
-
-    // Line 2 (Inputs): [ Scope ] / [ Query ] side-by-side
+    // Line 1 (Inputs): [ Scope ] │ [ Query ] side-by-side
     let scope_active = app.chtsh.focus == ChtshFocus::Scope;
     let query_active = app.chtsh.focus == ChtshFocus::Query;
 
@@ -131,28 +115,40 @@ fn draw_chtsh_input(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme)
             Constraint::Length(2),
             Constraint::Percentage(63),
         ])
-        .split(chunks[1]);
+        .split(chunks[0]);
 
-    // Scope block
-    let scope_cursor = if scope_active { "█" } else { "" };
-    let scope_display = format!("Scope: {}{}", app.chtsh.scope, scope_cursor);
-    let scope_style = if scope_active { theme.emphasis() } else { theme.muted() };
-    let scope_p = Paragraph::new(Span::styled(scope_display, scope_style))
-        .block(Block::default().borders(Borders::NONE));
-    frame.render_widget(scope_p, input_chunks[0]);
+    // Scope block with cursor insertion
+    let scope_text = app.chtsh.scope.value();
+    let scope_cursor_idx = app.chtsh.scope.cursor.min(scope_text.len());
+    let mut scope_display = Vec::new();
+    scope_display.push(Span::styled("Scope: ", if scope_active { theme.accent() } else { theme.muted() }));
+    if scope_active {
+        scope_display.push(Span::raw(&scope_text[..scope_cursor_idx]));
+        scope_display.push(Span::styled("█", theme.accent()));
+        scope_display.push(Span::raw(&scope_text[scope_cursor_idx..]));
+    } else {
+        scope_display.push(Span::styled(scope_text, theme.base()));
+    }
+    frame.render_widget(Paragraph::new(Line::from(scope_display)), input_chunks[0]);
 
     // Divider
     frame.render_widget(Paragraph::new(Span::styled("│", theme.muted())), input_chunks[1]);
 
-    // Query block
-    let query_cursor = if query_active { "█" } else { "" };
-    let query_display = format!("Query: {}{}", app.chtsh.query, query_cursor);
-    let query_style = if query_active { theme.emphasis() } else { theme.muted() };
-    let query_p = Paragraph::new(Span::styled(query_display, query_style))
-        .block(Block::default().borders(Borders::NONE));
-    frame.render_widget(query_p, input_chunks[2]);
+    // Query block with cursor insertion
+    let query_text = app.chtsh.query.value();
+    let query_cursor_idx = app.chtsh.query.cursor.min(query_text.len());
+    let mut query_display = Vec::new();
+    query_display.push(Span::styled("Query: ", if query_active { theme.accent() } else { theme.muted() }));
+    if query_active {
+        query_display.push(Span::raw(&query_text[..query_cursor_idx]));
+        query_display.push(Span::styled("█", theme.accent()));
+        query_display.push(Span::raw(&query_text[query_cursor_idx..]));
+    } else {
+        query_display.push(Span::styled(query_text, theme.base()));
+    }
+    frame.render_widget(Paragraph::new(Line::from(query_display)), input_chunks[2]);
 
-    // Line 3 (Fuzzy Suggestions): Horizontal top matches
+    // Line 2 (Fuzzy Suggestions): Horizontal top matches
     let mut sug_spans = Vec::new();
     sug_spans.push(Span::styled("Suggestions: ", theme.muted()));
     if app.chtsh.suggestions.is_empty() {
@@ -172,5 +168,5 @@ fn draw_chtsh_input(frame: &mut Frame, app: &mut App, area: Rect, theme: &Theme)
             }
         }
     }
-    frame.render_widget(Paragraph::new(Line::from(sug_spans)), chunks[2]);
+    frame.render_widget(Paragraph::new(Line::from(sug_spans)), chunks[1]);
 }

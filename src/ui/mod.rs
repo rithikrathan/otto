@@ -34,7 +34,6 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
     buffer::draw(frame, app, rows[0]);
     draw_statusline(frame, app, rows[1], &theme);
     prompt::draw(frame, app, rows[2], &theme);
-    draw_bottom(frame, app, rows[3], &theme);
 
     // Floating window overlays the main UI last so it is on top.
     modal::draw(frame, app);
@@ -43,7 +42,7 @@ pub fn draw(frame: &mut Frame, app: &mut App) {
 
 /// The separator statusline between the buffer and the prompt box.
 ///
-/// Shows active buffer · model · token stats (read / write / ctx %) · spinner.
+/// Shows active buffer · model · token stats (read / write / ctx %) · spinner · [?] Help · connection status.
 fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
     let model = &app.model_name;
     let (r, w) = (app.tokens.prompt_tokens, app.tokens.eval_tokens);
@@ -58,31 +57,23 @@ fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Them
     ];
     if let Some(job) = app.busy.first() {
         left.push(Span::styled(
-            format!(" {} {}", spinner::frame(app.tick, job), busy_label(job)),
-            theme.spinner(),
+            format!("{} {} ", spinner::frame(app.tick, job), busy_label(job)),
+            theme.accent(),
         ));
-        left.push(Span::styled(" · ", theme.muted()));
+    } else {
+        left.push(Span::styled(format!("{model} "), theme.base()));
     }
 
-    let mut right = Vec::new();
-    if area.width > 60 {
-        right.push(Span::styled(model, theme.muted()));
-        right.push(Span::styled(" · ", theme.muted()));
-    }
-    
-    right.extend(vec![
-        Span::raw(format!("in {}", r)),
-        Span::styled(" · ", theme.muted()),
-        Span::raw(format!("out {}", w)),
-        Span::styled(" · ", theme.muted()),
-        Span::styled(format!("ctx {}", ctx), theme.muted()),
-        Span::styled(" · ", theme.muted()),
+    let right = vec![
+        Span::styled(format!(" {r}r {w}w "), theme.muted()),
+        Span::styled(format!("{ctx:3}% "), theme.base()),
+        Span::styled("│ [?] Help ", theme.muted()),
         if app.is_connected {
             Span::styled("●", ratatui::style::Style::default().fg(ratatui::style::Color::Green))
         } else {
             Span::styled("●", ratatui::style::Style::default().fg(ratatui::style::Color::Red))
         },
-    ]);
+    ];
 
     // Right-align the stats block at the end of the statusline.
     let mut line = Line::from(left);
@@ -99,24 +90,4 @@ fn busy_label(job: &JobKind) -> &'static str {
         JobKind::ChtshFetch => "fetching",
         JobKind::Models => "loading models",
     }
-}
-
-/// The bottom statusline: mode / key hints.
-fn draw_bottom(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Theme) {
-    let hint = if app.pending_abort {
-        "Press ESC again to stop prompt"
-    } else {
-        match app.active_buffer() {
-            crate::buffers::BufferId::Chat => "[Enter]send [Ctrl+K]clear",
-            crate::buffers::BufferId::Search => "[Enter]search",
-            crate::buffers::BufferId::Chtsh => "[Enter]query",
-        }
-    };
-    let line = Line::from(vec![
-        Span::styled(" ", theme.muted()),
-        Span::styled(hint, theme.muted()),
-        Span::styled(" │ ", theme.muted()),
-        Span::styled("[Tab]switch  [Ctrl+Q]quit", theme.muted()),
-    ]);
-    frame.render_widget(Paragraph::new(line).style(theme.muted()), area);
 }

@@ -197,6 +197,14 @@ fn handle_key(
         _ if app.active_buffer() == crate::buffers::BufferId::Chtsh => {
             return handle_chtsh_key(app, key, tx, config);
         }
+        KeyCode::F(1) => {
+            app.open_modal(app::Modal::Help);
+            return Ok(());
+        }
+        KeyCode::Char('?') if app.prompt.is_empty() => {
+            app.open_modal(app::Modal::Help);
+            return Ok(());
+        }
         KeyCode::Esc => {
             if !app.prompt.is_empty() {
                 app.prompt.reset();
@@ -423,12 +431,7 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &mut config::Con
                 Ok(())
             }
             cmd::Command::Help => {
-                let help_text = "### Available Commands\n\n* `/clear`: Clear chat history\n* `/model [name]`: Change model (empty to open picker)\n* `/settings`: Open settings\n* `/export <path>`: Export chat to file\n* `/google`, `/bing`, `/ddg`: Change search provider\n* `/help`: Show this help\n* `/exit`, `:q`: Quit\n\n_Tip: Use Tab or Right Arrow to autocomplete slash commands._";
-                app.chat.view.blocks.push(crate::buffers::Block {
-                    kind: "markdown".to_string(),
-                    markdown: help_text.into(),
-                });
-                app.chat.view.scroll = 9999;
+                app.open_modal(app::Modal::Help);
                 Ok(())
             }
             cmd::Command::SearchProvider(provider) => {
@@ -617,21 +620,74 @@ fn handle_chtsh_key(
             app.running = false;
             return Ok(());
         }
+        KeyCode::Tab => {
+            app.next_buffer();
+            return Ok(());
+        }
         KeyCode::BackTab => {
             app.prev_buffer();
             return Ok(());
         }
-        KeyCode::Tab if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.next_buffer();
+        KeyCode::F(1) => {
+            app.open_modal(app::Modal::Help);
+            return Ok(());
+        }
+        KeyCode::Char('?') if app.chtsh.scope.is_empty() && app.chtsh.query.is_empty() => {
+            app.open_modal(app::Modal::Help);
             return Ok(());
         }
         KeyCode::Esc => {
-            app.chtsh.query.clear();
-            app.chtsh.refresh_suggestions();
+            if !app.chtsh.query.is_empty() {
+                app.chtsh.query.clear();
+            } else if !app.chtsh.scope.is_empty() {
+                app.chtsh.scope.clear();
+                app.chtsh.set_focus(buffers::chtsh::ChtshFocus::Scope);
+            }
+            app.chtsh.suggestions.clear();
             return Ok(());
         }
-        KeyCode::Tab | KeyCode::Left | KeyCode::Right => {
-            app.chtsh.toggle_focus();
+        KeyCode::Left => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.chtsh.move_word_backward();
+            } else {
+                app.chtsh.move_left();
+            }
+            return Ok(());
+        }
+        KeyCode::Right => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.chtsh.move_word_forward();
+            } else {
+                app.chtsh.move_right();
+            }
+            return Ok(());
+        }
+        KeyCode::Home | KeyCode::Char('a') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.chtsh.move_start();
+            return Ok(());
+        }
+        KeyCode::End | KeyCode::Char('e') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.chtsh.move_end();
+            return Ok(());
+        }
+        KeyCode::Char('w') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            app.chtsh.delete_word_backward();
+            return Ok(());
+        }
+        KeyCode::Backspace | KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.chtsh.delete_word_backward();
+            } else {
+                app.chtsh.delete_backward();
+            }
+            return Ok(());
+        }
+        KeyCode::Delete | KeyCode::Char('d') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
+                app.chtsh.delete_word_forward();
+            } else {
+                app.chtsh.delete_forward();
+            }
             return Ok(());
         }
         KeyCode::Up => {
@@ -643,17 +699,21 @@ fn handle_chtsh_key(
             return Ok(());
         }
         KeyCode::Char(' ') => {
-            let old_scope = app.chtsh.scope.clone();
-            app.chtsh.accept_suggestion();
-            if app.chtsh.scope != old_scope && !app.chtsh.scope.is_empty() {
-                let scope = app.chtsh.scope.clone();
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let client = chtsh::ChtShClient::new();
-                    if let Ok(topics) = client.fetch_topic_list(&scope).await {
-                        let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: scope, topics });
-                    }
-                });
+            if !app.chtsh.suggestions.is_empty() {
+                let old_scope = app.chtsh.scope.value().to_string();
+                app.chtsh.accept_suggestion();
+                let new_scope = app.chtsh.scope.value().to_string();
+                if new_scope != old_scope && !new_scope.is_empty() {
+                    let tx = tx.clone();
+                    tokio::spawn(async move {
+                        let client = chtsh::ChtShClient::new();
+                        if let Ok(topics) = client.fetch_topic_list(&new_scope).await {
+                            let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: new_scope, topics });
+                        }
+                    });
+                }
+            } else {
+                app.chtsh.insert_char(' ');
             }
             return Ok(());
         }
@@ -661,24 +721,10 @@ fn handle_chtsh_key(
             trigger_chtsh_direct(app, tx)?;
             return Ok(());
         }
-        KeyCode::Backspace => {
-            app.chtsh.backspace();
-            if app.chtsh.focus == buffers::chtsh::ChtshFocus::Scope && !app.chtsh.scope.is_empty() {
-                let scope = app.chtsh.scope.clone();
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let client = chtsh::ChtShClient::new();
-                    if let Ok(topics) = client.fetch_topic_list(&scope).await {
-                        let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: scope, topics });
-                    }
-                });
-            }
-            return Ok(());
-        }
         KeyCode::Char(c) => {
             app.chtsh.insert_char(c);
             if app.chtsh.focus == buffers::chtsh::ChtshFocus::Scope && !app.chtsh.scope.is_empty() {
-                let scope = app.chtsh.scope.clone();
+                let scope = app.chtsh.scope.value().to_string();
                 let tx = tx.clone();
                 tokio::spawn(async move {
                     let client = chtsh::ChtShClient::new();
@@ -703,11 +749,11 @@ fn handle_chtsh_key(
 }
 
 fn trigger_chtsh_direct(app: &mut App, tx: &EventSender) -> Result<()> {
-    let scope = app.chtsh.scope.trim().to_string();
+    let scope = app.chtsh.scope.value().trim().to_string();
     if scope.is_empty() {
         return Ok(());
     }
-    let query = app.chtsh.query.trim().to_string();
+    let query = app.chtsh.query.value().trim().to_string();
     let display_query = if query.is_empty() {
         scope.clone()
     } else {
