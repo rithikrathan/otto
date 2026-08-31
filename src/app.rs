@@ -684,6 +684,7 @@ impl TokenStats {
 mod tests {
     use super::*;
 
+    #[test]
     fn token_accumulate_and_percent() {
         let mut t = TokenStats::new();
         t.accumulate(2048, 120, Some(4096));
@@ -695,6 +696,7 @@ mod tests {
         assert_eq!(t.context_percent(), 100);
     }
 
+    #[test]
     fn reset_clears_counts() {
         let mut t = TokenStats::new();
         t.accumulate(500, 30, Some(4096));
@@ -703,6 +705,7 @@ mod tests {
         assert_eq!(t.eval_tokens, 0);
     }
 
+    #[test]
     fn test_tab_switching() {
         let mut app = App::new();
         assert_eq!(app.active_buffer(), BufferId::Chat);
@@ -716,10 +719,18 @@ mod tests {
         assert_eq!(app.active_buffer(), BufferId::Chtsh); // wraps back
     }
 
+    #[test]
     fn mouse_scroll_only_moves_active_buffer_and_stays_positive() {
         let mut app = App::new();
         assert_eq!(app.active_buffer(), BufferId::Chat);
+        app.chat.view.last_max_scroll.set(100);
+        app.chat.view.auto_scroll = false;
         app.chat.view.scroll = 0;
+
+        app.search.view.last_max_scroll.set(100);
+        app.search.view.auto_scroll = false;
+        app.search.view.scroll = 0;
+
         app.handle_event(AppEvent::MouseScroll { delta: -5 });
         assert_eq!(app.chat.view.scroll, 0); // clamped at zero
         app.handle_event(AppEvent::MouseScroll { delta: 3 });
@@ -730,6 +741,7 @@ mod tests {
         assert_eq!(app.chat.view.scroll, 3); // chat untouched
     }
 
+    #[test]
     fn history_push_dedupes_and_resets_prompt() {
         let mut app = App::new();
         app.prompt.set_text("hello");
@@ -741,6 +753,7 @@ mod tests {
         assert_eq!(app.history.len(), 1);
     }
 
+    #[test]
     fn history_back_forward_restores_draft() {
         let mut app = App::new();
         app.history_push("one");
@@ -760,6 +773,7 @@ mod tests {
         assert_eq!(app.prompt.value(), "draft ");
     }
 
+    #[test]
     fn prompt_up_down_moves_between_lines_and_stops_at_edges() {
         let mut p = input::Prompt::new();
         p.set_text("line one\nline two\nline three");
@@ -774,8 +788,10 @@ mod tests {
         assert_eq!(&p.value()[..p.cursor], "line one\nline two\n");
     }
 
+    #[test]
     fn model_picker_apply_sets_model_and_closes() {
         let mut app = App::new();
+        app.provider_models.insert("ollama".into(), vec!["a".into(), "b".into(), "c".into()]);
         app.models = vec!["a".into(), "b".into(), "c".into()];
         app.open_modal(Modal::ModelPicker);
         assert_eq!(app.modal, Some(Modal::ModelPicker));
@@ -787,8 +803,10 @@ mod tests {
         assert_eq!(app.modal, None);
     }
 
+    #[test]
     fn modal_move_clamps_and_close_resets() {
         let mut app = App::new();
+        app.provider_models.insert("ollama".into(), vec!["x".into()]);
         app.models = vec!["x".into()];
         app.open_modal(Modal::ModelPicker);
         app.modal_move(true); // stays at 0
@@ -800,6 +818,41 @@ mod tests {
         assert_eq!(app.modal_index, 0);
     }
 
+    #[test]
+    fn test_multi_provider_modal_switching() {
+        let mut app = App::new();
+        app.provider_list = vec!["ollama".into(), "groq".into(), "gemini".into(), "nvidia".into()];
+        app.provider_index = 0;
+        app.provider_name = "ollama".into();
+        app.provider_models.insert("ollama".into(), vec!["qwen2.5-coder-1.5b:latest".into()]);
+        app.provider_models.insert("groq".into(), vec!["llama-3.3-70b-versatile".into()]);
+
+        app.open_modal(Modal::ModelPicker);
+        assert_eq!(app.active_provider_tab(), "ollama");
+
+        app.modal_next_provider();
+        assert_eq!(app.active_provider_tab(), "groq");
+
+        // Apply first model of groq
+        app.modal_apply();
+        assert_eq!(app.provider_name, "groq");
+        assert_eq!(app.model_name, "llama-3.3-70b-versatile");
+    }
+
+    #[test]
+    fn test_global_model_search() {
+        let mut app = App::new();
+        app.provider_models.insert("ollama".into(), vec!["qwen2.5-coder-7b:latest".into()]);
+        app.provider_models.insert("nvidia".into(), vec!["nvidia/llama-3.1-nemotron-70b-instruct".into()]);
+
+        app.modal_search = "nemotron".into();
+        let matches = app.filtered_models_with_provider();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].0, "nvidia");
+        assert_eq!(matches[0].1, "nvidia/llama-3.1-nemotron-70b-instruct");
+    }
+
+    #[test]
     fn settings_toggle_flips_boolean_row() {
         let mut app = App::new();
         app.settings.search_summarize = false;

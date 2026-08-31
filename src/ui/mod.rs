@@ -61,7 +61,10 @@ fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Them
             theme.accent(),
         ));
     } else {
-        left.push(Span::styled(format!("{model} "), theme.base()));
+        left.push(Span::styled(
+            format!("[{}] {} ", app.provider_name, model),
+            theme.base(),
+        ));
     }
 
     let right = vec![
@@ -69,9 +72,9 @@ fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Them
         Span::styled(format!("{ctx:3}% "), theme.base()),
         Span::styled("│ [?] Help ", theme.muted()),
         if app.is_connected {
-            Span::styled("●", ratatui::style::Style::default().fg(ratatui::style::Color::Green))
+            Span::styled("● ", ratatui::style::Style::default().fg(ratatui::style::Color::Green))
         } else {
-            Span::styled("●", ratatui::style::Style::default().fg(ratatui::style::Color::Red))
+            Span::styled("● ", ratatui::style::Style::default().fg(ratatui::style::Color::Red))
         },
     ];
 

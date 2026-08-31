@@ -94,13 +94,25 @@ async fn run(
         });
     }
     
-    // Periodically check server connection status
+    // Active provider connection target shared with the background checker
+    let initial_target = (
+        app.provider_name.clone(),
+        config.resolve_url(&app.provider_name),
+        config.resolve_api_key(&app.provider_name),
+    );
+    let active_target = std::sync::Arc::new(tokio::sync::RwLock::new(initial_target));
+
+    // Periodically check server connection status of the active provider
     let tx_conn = tx.clone();
-    let conn_client = ollama::Ollama::from_config(config);
+    let target_checker = active_target.clone();
     tokio::spawn(async move {
         loop {
-            let models = conn_client.list_models().await;
-            let connected = models.is_ok();
+            let (prov, url, key) = {
+                let guard = target_checker.read().await;
+                (guard.0.clone(), guard.1.clone(), guard.2.clone())
+            };
+            let client = ollama::Ollama::new(prov, url, key);
+            let connected = client.list_models().await.is_ok();
             let _ = tx_conn.send(AppEvent::ConnectionStatus(connected));
             tokio::time::sleep(Duration::from_secs(4)).await;
         }
@@ -151,7 +163,7 @@ async fn run(
             ev = rx.recv() => {
                 match ev {
                     Some(AppEvent::Input(key)) => {
-                        handle_key(app, key, &tx, config)?;
+                        handle_key(app, key, &tx, config, &active_target)?;
                     }
 
                     Some(other) => {
@@ -171,6 +183,7 @@ fn handle_key(
     key: crossterm::event::KeyEvent,
     tx: &EventSender,
     config: &mut config::Config,
+    active_target: &std::sync::Arc<tokio::sync::RwLock<(String, String, Option<String>)>>,
 ) -> Result<()> {
     if key.kind != crossterm::event::KeyEventKind::Press {
         return Ok(());
@@ -191,7 +204,7 @@ fn handle_key(
         }
         // A floating window has focus: route keys to it.
         _ if app.modal.is_some() => {
-            return handle_modal_key(app, key, tx, config);
+            return handle_modal_key(app, key, tx, config, active_target);
         }
         _ if app.active_buffer() == crate::buffers::BufferId::Chtsh => {
             return handle_chtsh_key(app, key, tx, config);
@@ -339,6 +352,7 @@ fn handle_modal_key(
     key: crossterm::event::KeyEvent,
     tx: &EventSender,
     config: &mut config::Config,
+    active_target: &std::sync::Arc<tokio::sync::RwLock<(String, String, Option<String>)>>,
 ) -> Result<()> {
     if app.modal_search_focused {
         match key.code {
@@ -354,6 +368,20 @@ fn handle_modal_key(
                     config.server.api_key = config.resolve_api_key(&app.provider_name);
                     let _ = config.save();
                     let _ = tx.send(ev);
+
+                    let new_target = (
+                        app.provider_name.clone(),
+                        config.resolve_url(&app.provider_name),
+                        config.resolve_api_key(&app.provider_name),
+                    );
+                    let target_ref = active_target.clone();
+                    let tx_instant = tx.clone();
+                    tokio::spawn(async move {
+                        *target_ref.write().await = new_target.clone();
+                        let client = ollama::Ollama::new(new_target.0, new_target.1, new_target.2);
+                        let connected = client.list_models().await.is_ok();
+                        let _ = tx_instant.send(AppEvent::ConnectionStatus(connected));
+                    });
                 }
             }
             KeyCode::Backspace => {
@@ -416,6 +444,20 @@ fn handle_modal_key(
                 config.server.api_key = config.resolve_api_key(&app.provider_name);
                 let _ = config.save();
                 let _ = tx.send(ev);
+
+                let new_target = (
+                    app.provider_name.clone(),
+                    config.resolve_url(&app.provider_name),
+                    config.resolve_api_key(&app.provider_name),
+                );
+                let target_ref = active_target.clone();
+                let tx_instant = tx.clone();
+                tokio::spawn(async move {
+                    *target_ref.write().await = new_target.clone();
+                    let client = ollama::Ollama::new(new_target.0, new_target.1, new_target.2);
+                    let connected = client.list_models().await.is_ok();
+                    let _ = tx_instant.send(AppEvent::ConnectionStatus(connected));
+                });
             }
             Ok(())
         }

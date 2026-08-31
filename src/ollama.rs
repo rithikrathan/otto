@@ -381,3 +381,55 @@ impl Ollama {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_tags_response_deserialization() {
+        let json_data = r#"{
+            "models": [
+                {
+                    "name": "qwen2.5-coder-7b:latest",
+                    "model": "qwen2.5-coder-7b:latest",
+                    "modified_at": "2026-08-30T00:09:53.133945089+05:30",
+                    "size": 4683073904
+                },
+                {
+                    "name": "llama3.2-3b:latest",
+                    "model": "llama3.2-3b:latest",
+                    "size": 2019393144
+                }
+            ]
+        }"#;
+
+        let tags: TagsResponse = serde_json::from_str(json_data).unwrap();
+        assert_eq!(tags.models.len(), 2);
+        assert_eq!(tags.models[0].name, "qwen2.5-coder-7b:latest");
+        assert_eq!(tags.models[1].name, "llama3.2-3b:latest");
+    }
+
+    #[test]
+    fn test_openai_stream_chunk_deserialization() {
+        let json_data = r#"{
+            "id": "chatcmpl-123",
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {
+                        "content": "Hello, world!"
+                    }
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 12,
+                "completion_tokens": 4
+            }
+        }"#;
+
+        let chunk: OpenAiStreamChunk = serde_json::from_str(json_data).unwrap();
+        assert_eq!(chunk.choices[0].delta.content.as_deref(), Some("Hello, world!"));
+        assert_eq!(chunk.usage.unwrap().prompt_tokens, 12);
+    }
+}
+

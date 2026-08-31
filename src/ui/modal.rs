@@ -36,12 +36,12 @@ pub fn draw(frame: &mut Frame, app: &App) {
     }
 }
 
-/// Draw the ultra-modern categorized Model & Provider Picker.
+/// Draw the categorized Model & Provider Picker.
 fn draw_model_picker(frame: &mut Frame, app: &App, win: Rect, theme: theme::Theme) {
     let outer_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(" 󱚣  Select Model & Provider ")
+        .title(" Select Model & Provider ")
         .title_style(theme.emphasis().fg(Color::Cyan))
         .border_style(theme.accent());
 
@@ -68,13 +68,13 @@ fn draw_model_picker(frame: &mut Frame, app: &App, win: Rect, theme: theme::Them
     let search_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(if search_focused { "  Search Models (active) " } else { "  Search Models (press '.' to focus) " })
+        .title(if search_focused { " Search Models (active) " } else { " Search Models (press '.' to focus) " })
         .title_style(if search_focused { Style::default().fg(Color::Yellow) } else { theme.muted() })
         .border_style(search_border_style);
 
     let search_text = if app.modal_search.is_empty() {
         if search_focused {
-            Line::from(vec![Span::styled("█", Style::default().fg(Color::Yellow))])
+            Line::from(vec![Span::styled("_", Style::default().fg(Color::Yellow))])
         } else {
             Line::from(vec![Span::styled("Type to filter models across all providers...", theme.muted())])
         }
@@ -82,7 +82,7 @@ fn draw_model_picker(frame: &mut Frame, app: &App, win: Rect, theme: theme::Them
         if search_focused {
             Line::from(vec![
                 Span::raw(&app.modal_search),
-                Span::styled("█", Style::default().fg(Color::Yellow)),
+                Span::styled("_", Style::default().fg(Color::Yellow)),
             ])
         } else {
             Line::from(vec![Span::raw(&app.modal_search)])
@@ -94,27 +94,19 @@ fn draw_model_picker(frame: &mut Frame, app: &App, win: Rect, theme: theme::Them
     let provider_block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .title(" 󰘵  Provider Categories ")
+        .title(" Provider Categories ")
         .title_style(theme.emphasis())
         .border_style(theme.muted());
 
     let mut provider_spans = Vec::new();
-    provider_spans.push(Span::styled(" ◄ Tab/← ", theme.muted()));
+    provider_spans.push(Span::styled(" < Tab/Left ", theme.muted()));
 
     for (i, p) in app.provider_list.iter().enumerate() {
         let is_selected = i == app.provider_index;
         let count = app.provider_models.get(p).map(|v| v.len()).unwrap_or(0);
-        let icon = match p.as_str() {
-            "ollama" => "󱚣",
-            "groq" => "⚡",
-            "gemini" => "✦",
-            "nvidia" => "󰢮",
-            "openai" => "󰧑",
-            _ => "󰘵",
-        };
 
         if is_selected {
-            let label = format!(" [{icon} {} ({count})] ", p.to_uppercase());
+            let label = format!(" [ {} ({count}) ] ", p.to_uppercase());
             provider_spans.push(Span::styled(
                 label,
                 Style::default()
@@ -123,21 +115,21 @@ fn draw_model_picker(frame: &mut Frame, app: &App, win: Rect, theme: theme::Them
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
-            let label = format!(" {icon} {p} ");
+            let label = format!(" {} ", p);
             provider_spans.push(Span::styled(label, theme.muted()));
         }
         provider_spans.push(Span::raw(" "));
     }
 
-    provider_spans.push(Span::styled("→/Shift+Tab ► ", theme.muted()));
+    provider_spans.push(Span::styled("Right/Shift+Tab > ", theme.muted()));
     frame.render_widget(Paragraph::new(Line::from(provider_spans)).block(provider_block), chunks[1]);
 
     // 3. Models List
     let items_with_prov = app.filtered_models_with_provider();
     let list_title = if app.modal_search.is_empty() {
-        format!(" 󰚩  {} Models ({}) ", app.active_provider_tab().to_uppercase(), items_with_prov.len())
+        format!(" {} Models ({}) ", app.active_provider_tab().to_uppercase(), items_with_prov.len())
     } else {
-        format!(" 󰚩  Matching Models ({}) ", items_with_prov.len())
+        format!(" Matching Models ({}) ", items_with_prov.len())
     };
 
     let list_block = Block::default()
@@ -148,7 +140,6 @@ fn draw_model_picker(frame: &mut Frame, app: &App, win: Rect, theme: theme::Them
         .border_style(theme.muted());
 
     let inner_list_area = chunks[2];
-    let max_row_w = inner_list_area.width.saturating_sub(6) as usize;
 
     let items: Vec<ListItem> = items_with_prov
         .iter()
@@ -161,7 +152,7 @@ fn draw_model_picker(frame: &mut Frame, app: &App, win: Rect, theme: theme::Them
 
             // Cursor prefix
             if is_cursor {
-                line_spans.push(Span::styled(" ❯ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+                line_spans.push(Span::styled(" > ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
             } else {
                 line_spans.push(Span::raw("   "));
             }
@@ -205,9 +196,9 @@ fn draw_model_picker(frame: &mut Frame, app: &App, win: Rect, theme: theme::Them
     let footer_spans = vec![
         Span::styled(" [.] ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
         Span::styled("Search  ", theme.muted()),
-        Span::styled(" [Tab/←/→] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::styled(" [Tab/Left/Right] ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::styled("Provider  ", theme.muted()),
-        Span::styled(" [↑/↓] ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
+        Span::styled(" [Up/Down] ", Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::styled("Select  ", theme.muted()),
         Span::styled(" [Enter] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
         Span::styled("Switch  ", theme.muted()),
@@ -222,9 +213,9 @@ fn draw_generic_modal(frame: &mut Frame, app: &App, win: Rect, theme: theme::The
     let modal = app.modal.as_ref().unwrap();
 
     let (title, rows) = match modal {
-        Modal::Settings => (" 󰒓  Settings ", app.modal_rows()),
-        Modal::SearchQueryPicker(_) => (" 󰍉  Select Search Query ", app.modal_rows()),
-        Modal::Help => (" 󰞋  Keyboard Shortcuts & Help ", app.modal_rows()),
+        Modal::Settings => (" Settings ", app.modal_rows()),
+        Modal::SearchQueryPicker(_) => (" Select Search Query ", app.modal_rows()),
+        Modal::Help => (" Keyboard Shortcuts & Help ", app.modal_rows()),
         _ => (" Modal ", app.modal_rows()),
     };
 
@@ -250,7 +241,7 @@ fn draw_generic_modal(frame: &mut Frame, app: &App, win: Rect, theme: theme::The
             let is_sel = i == app.modal_index;
             let mut spans = Vec::new();
             if is_sel {
-                spans.push(Span::styled(" ❯ ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
+                spans.push(Span::styled(" > ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)));
             } else {
                 spans.push(Span::raw("   "));
             }
@@ -261,7 +252,7 @@ fn draw_generic_modal(frame: &mut Frame, app: &App, win: Rect, theme: theme::The
             ));
 
             if !value.is_empty() {
-                spans.push(Span::styled(format!("  →  {value}"), theme.muted()));
+                spans.push(Span::styled(format!("  ->  {value}"), theme.muted()));
             }
 
             ListItem::new(Line::from(spans))
@@ -274,9 +265,9 @@ fn draw_generic_modal(frame: &mut Frame, app: &App, win: Rect, theme: theme::The
     frame.render_stateful_widget(list, chunks[0], &mut state);
 
     let hint = match modal {
-        Modal::Settings => " [↑/↓] Move   [Enter] Toggle/Edit   [Esc] Close ",
-        Modal::Help => " [↑/↓/PageUp/PageDown] Scroll   [Esc / Enter] Close ",
-        _ => " [↑/↓] Move   [Enter] Select   [Esc] Close ",
+        Modal::Settings => " [Up/Down] Move   [Enter] Toggle/Edit   [Esc] Close ",
+        Modal::Help => " [Up/Down/PageUp/PageDown] Scroll   [Esc / Enter] Close ",
+        _ => " [Up/Down] Move   [Enter] Select   [Esc] Close ",
     };
     frame.render_widget(Paragraph::new(hint).style(theme.muted()), chunks[1]);
 }
@@ -291,4 +282,5 @@ fn modal_height(app: &App, max_screen_height: u16) -> u16 {
         None => 8,
     }
 }
+
 

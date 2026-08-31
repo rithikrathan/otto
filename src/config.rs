@@ -40,27 +40,27 @@ impl Config {
 
     /// Resolve effective API key for a provider from config or environment variables.
     pub fn resolve_api_key(&self, provider: &str) -> Option<String> {
-        if self.server.provider == provider {
-            if let Some(ref k) = self.server.api_key {
-                if !k.is_empty() {
-                    return Some(k.clone());
-                }
+        let entry_key = match provider {
+            "openai" => self.providers.openai.api_key.as_ref(),
+            "groq" => self.providers.groq.api_key.as_ref(),
+            "gemini" => self.providers.gemini.api_key.as_ref(),
+            "nvidia" => self.providers.nvidia.api_key.as_ref(),
+            "openrouter" => self.providers.openrouter.api_key.as_ref(),
+            "custom" => self.providers.custom.api_key.as_ref(),
+            _ => self.providers.ollama.api_key.as_ref(),
+        };
+
+        if let Some(k) = entry_key {
+            if !k.trim().is_empty() {
+                return Some(k.trim().to_string());
             }
         }
 
-        let entry = match provider {
-            "openai" => &self.providers.openai,
-            "groq" => &self.providers.groq,
-            "gemini" => &self.providers.gemini,
-            "nvidia" => &self.providers.nvidia,
-            "openrouter" => &self.providers.openrouter,
-            "custom" => &self.providers.custom,
-            _ => &self.providers.ollama,
-        };
-
-        if let Some(ref k) = entry.api_key {
-            if !k.is_empty() {
-                return Some(k.clone());
+        if self.server.provider == provider {
+            if let Some(ref k) = self.server.api_key {
+                if !k.trim().is_empty() {
+                    return Some(k.trim().to_string());
+                }
             }
         }
 
@@ -77,18 +77,56 @@ impl Config {
 
     /// Resolve effective URL for a provider.
     pub fn resolve_url(&self, provider: &str) -> String {
-        if self.server.provider == provider && !self.server.url.is_empty() {
-            return self.server.url.clone();
-        }
-
         match provider {
-            "openai" => self.providers.openai.url.clone(),
-            "groq" => self.providers.groq.url.clone(),
-            "gemini" => self.providers.gemini.url.clone(),
-            "nvidia" => self.providers.nvidia.url.clone(),
-            "openrouter" => self.providers.openrouter.url.clone(),
-            "custom" => self.providers.custom.url.clone(),
-            _ => self.providers.ollama.url.clone(),
+            "openai" => {
+                if !self.providers.openai.url.is_empty() {
+                    self.providers.openai.url.clone()
+                } else {
+                    "https://api.openai.com/v1".to_string()
+                }
+            }
+            "groq" => {
+                if !self.providers.groq.url.is_empty() {
+                    self.providers.groq.url.clone()
+                } else {
+                    "https://api.groq.com/openai/v1".to_string()
+                }
+            }
+            "gemini" => {
+                if !self.providers.gemini.url.is_empty() {
+                    self.providers.gemini.url.clone()
+                } else {
+                    "https://generativelanguage.googleapis.com/v1beta/openai".to_string()
+                }
+            }
+            "nvidia" => {
+                if !self.providers.nvidia.url.is_empty() {
+                    self.providers.nvidia.url.clone()
+                } else {
+                    "https://integrate.api.nvidia.com/v1".to_string()
+                }
+            }
+            "openrouter" => {
+                if !self.providers.openrouter.url.is_empty() {
+                    self.providers.openrouter.url.clone()
+                } else {
+                    "https://openrouter.ai/api/v1".to_string()
+                }
+            }
+            "custom" => {
+                if !self.providers.custom.url.is_empty() {
+                    self.providers.custom.url.clone()
+                } else {
+                    "http://localhost:8000/v1".to_string()
+                }
+            }
+            _ => {
+                if !self.providers.ollama.url.is_empty() {
+                    self.providers.ollama.url.clone()
+                } else {
+                    "http://localhost:11434".to_string()
+                }
+            }
         }
     }
 }
@@ -243,12 +281,16 @@ impl Default for ProvidersConfig {
             nvidia: ProviderEntry {
                 url: "https://integrate.api.nvidia.com/v1".to_string(),
                 api_key: None,
-                default_model: "meta/llama-3.1-405b-instruct".to_string(),
+                default_model: "nvidia/llama-3.1-nemotron-70b-instruct".to_string(),
                 models: vec![
+                    "nvidia/llama-3.1-nemotron-70b-instruct".to_string(),
+                    "nvidia/nemotron-4-340b-instruct".to_string(),
+                    "nvidia/llama-3.1-nemotron-51b-instruct".to_string(),
+                    "nvidia/nemotron-mini-4b-instruct".to_string(),
                     "meta/llama-3.1-405b-instruct".to_string(),
                     "meta/llama-3.1-70b-instruct".to_string(),
                     "deepseek-ai/deepseek-r1".to_string(),
-                    "nvidia/nemotron-4-340b-instruct".to_string(),
+                    "mistralai/mistral-large-2-instruct".to_string(),
                 ],
             },
             openrouter: ProviderEntry {
@@ -270,6 +312,33 @@ impl Default for ProvidersConfig {
                 models: vec![],
             },
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_url_all_providers() {
+        let config = Config::default();
+        assert_eq!(config.resolve_url("ollama"), "http://localhost:11434");
+        assert_eq!(config.resolve_url("groq"), "https://api.groq.com/openai/v1");
+        assert_eq!(config.resolve_url("gemini"), "https://generativelanguage.googleapis.com/v1beta/openai");
+        assert_eq!(config.resolve_url("nvidia"), "https://integrate.api.nvidia.com/v1");
+        assert_eq!(config.resolve_url("openai"), "https://api.openai.com/v1");
+        assert_eq!(config.resolve_url("openrouter"), "https://openrouter.ai/api/v1");
+    }
+
+    #[test]
+    fn test_resolve_api_key_from_provider_config() {
+        let mut config = Config::default();
+        config.providers.groq.api_key = Some("gsk_test123".to_string());
+        config.providers.nvidia.api_key = Some("nvapi-xyz".to_string());
+
+        assert_eq!(config.resolve_api_key("groq"), Some("gsk_test123".to_string()));
+        assert_eq!(config.resolve_api_key("nvidia"), Some("nvapi-xyz".to_string()));
+        assert_eq!(config.resolve_api_key("ollama"), None);
     }
 }
 
