@@ -32,15 +32,17 @@ pub struct App {
     pub tokens: TokenStats,
     /// Chat buffer state.
     pub chat: buffers::chat::ChatBuffer,
-    /// Search buffer state.
-    pub search: buffers::search::SearchBuffer,
     /// cht.sh buffer state.
     pub chtsh: buffers::chtsh::ChtshBuffer,
+    /// DuckDuckGo Instant Answer buffer state.
+    pub ddg: buffers::ddg::DdgBuffer,
+    /// Wikipedia quick-lookup buffer state.
+    pub wiki: buffers::wiki::WikiBuffer,
     /// Frame ticker (advances the spinner).
     pub tick: u64,
     /// Default model name (from config/manage selection).
     pub model_name: String,
-    /// Active provider name (e.g. ollama, openai, groq, gemini, nvidia, openrouter).
+    /// Active provider name (e.g. ollama, groq, gemini, nvidia).
     pub provider_name: String,
     /// Ordered provider tabs for model picker.
     pub provider_list: Vec<String>,
@@ -50,6 +52,8 @@ pub struct App {
     pub provider_models: std::collections::HashMap<String, Vec<String>>,
     /// Loaded models from Ollama API
     pub models: Vec<String>,
+    /// The active system prompt applied to new chat sessions.
+    pub system_prompt: String,
     /// Currently-open floating window (model picker / settings), if any.
     pub modal: Option<Modal>,
     /// Search query for the model picker.
@@ -68,15 +72,20 @@ pub struct App {
     pub bg_task: Option<tokio::task::JoinHandle<()>>,
     /// Connection status to the server.
     pub is_connected: bool,
+    /// Clickable link rectangles in the active buffer (buffer-local rows).
+    pub link_layout: Vec<crate::ui::buffer::LinkRect>,
+    /// Active buffer area geometry `(x, y, width, height)`.
+    pub buffer_area: (u16, u16, u16, u16),
+    /// Vertical scroll offset used during the last render.
+    pub link_scroll_y: u16,
+    /// Content wrap width of the active buffer.
+    pub link_inner_width: u16,
 }
 
 /// Editable settings surfaced in the floating settings window.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SettingsState {
     pub model: String,
-    pub server_url: String,
-    pub search_provider: String,
-    pub search_summarize: bool,
 }
 
 /// A floating window layered over the main UI.
@@ -84,13 +93,12 @@ pub struct SettingsState {
 pub enum Modal {
     ModelPicker,
     Settings,
-    SearchQueryPicker(Vec<String>),
     Help,
 }
 
 impl App {
     pub fn new() -> Self {
-        let tabs = vec![BufferId::Chat, BufferId::Search, BufferId::Chtsh];
+        let tabs = vec![BufferId::Chat, BufferId::Ddg, BufferId::Chtsh, BufferId::Wiki];
         let provider_list = vec![
             "ollama".to_string(),
             "groq".to_string(),
@@ -108,8 +116,9 @@ impl App {
             busy: Vec::new(),
             tokens: TokenStats::new(),
             chat: buffers::chat::ChatBuffer::default(),
-            search: buffers::search::SearchBuffer::default(),
             chtsh: buffers::chtsh::ChtshBuffer::default(),
+            ddg: buffers::ddg::DdgBuffer::default(),
+            wiki: buffers::wiki::WikiBuffer::default(),
             tick: 0,
             model_name: String::new(),
             provider_name: "ollama".to_string(),
@@ -117,45 +126,39 @@ impl App {
             provider_index: 0,
             provider_models: std::collections::HashMap::new(),
             models: Vec::new(),
+            system_prompt: crate::config::default_system_prompt().to_string(),
             modal: None,
             modal_search: String::new(),
             modal_search_focused: false,
             modal_index: 0,
-            settings: SettingsState {
-                model: String::new(),
-                server_url: String::new(),
-                search_provider: "duckduckgo".into(),
-                search_summarize: true,
-            },
+            settings: SettingsState::default(),
             running: true,
             pending_abort: false,
             bg_task: None,
             is_connected: true,
+            link_layout: Vec::new(),
+            buffer_area: (0, 0, 0, 0),
+            link_scroll_y: 0,
+            link_inner_width: 0,
         };
         app.chtsh.refresh_suggestions();
         app
     }
 
     pub fn init_from_config(&mut self, config: &crate::config::Config) {
-        self.provider_name = config.server.provider.clone();
-        if let Some(pos) = self.provider_list.iter().position(|p| p == &self.provider_name) {
-            self.provider_index = pos;
-        }
+        // Always boot into the local ollama provider with its default model; the
+        // user picks other providers/models manually during the session, and the
+        // choice is intentionally not persisted across restarts.
+        self.provider_name = "ollama".to_string();
+        self.provider_index = 0;
 
-        self.provider_models.insert("ollama".into(), config.providers.ollama.models.clone());
-        self.provider_models.insert("openai".into(), config.providers.openai.models.clone());
-        self.provider_models.insert("groq".into(), config.providers.groq.models.clone());
-        self.provider_models.insert("gemini".into(), config.providers.gemini.models.clone());
-        self.provider_models.insert("nvidia".into(), config.providers.nvidia.models.clone());
-        self.provider_models.insert("openrouter".into(), config.providers.openrouter.models.clone());
-        self.provider_models.insert("custom".into(), config.providers.custom.models.clone());
-
-        self.models = self.provider_models.get(&self.provider_name).cloned().unwrap_or_default();
         if self.model_name.is_empty() {
-            self.model_name = config.model.name.clone();
+            self.model_name = crate::config::default_model_name().to_string();
+        }
+        if !config.system_prompt.trim().is_empty() {
+            self.system_prompt = config.system_prompt.clone();
         }
         self.settings.model = self.model_name.clone();
-        self.settings.server_url = config.resolve_url(&self.provider_name);
     }
 
     /// Move to the next buffer (Tab).
@@ -180,8 +183,9 @@ impl App {
     pub fn active_scroll(&self) -> u16 {
         match self.active_buffer() {
             BufferId::Chat => self.chat.view.scroll,
-            BufferId::Search => self.search.view.scroll,
+            BufferId::Ddg => self.ddg.view.scroll,
             BufferId::Chtsh => self.chtsh.view.scroll,
+            BufferId::Wiki => self.wiki.view.scroll,
         }
         .min(1_000_000) as u16
     }
@@ -202,11 +206,15 @@ impl App {
             }
             AppEvent::Tick => {}
             AppEvent::Input(_) => {}
+            AppEvent::MouseClick { .. } => {
+                // Handled in the main loop (opens links); nothing to do here.
+            }
             AppEvent::MouseScroll { delta } => {
                 let view = match self.active_buffer() {
                     BufferId::Chat => &mut self.chat.view,
-                    BufferId::Search => &mut self.search.view,
+                    BufferId::Ddg => &mut self.ddg.view,
                     BufferId::Chtsh => &mut self.chtsh.view,
+                    BufferId::Wiki => &mut self.wiki.view,
                 };
                 let max_scroll = view.last_max_scroll.get();
                 let mut current_scroll = if view.auto_scroll {
@@ -286,23 +294,21 @@ impl App {
                 }
                 self.remove_job(JobKind::Models);
             }
-            AppEvent::SearchResultsLoaded { query, results } => {
-                self.search.set_results(&query, results);
-                self.remove_job(JobKind::SearchFetch);
-                self.remove_job(JobKind::SearchPlan);
+            AppEvent::DdgResult { query, markdown } => {
+                self.ddg.set_result(&query, markdown);
+                self.remove_job(JobKind::DdgFetch);
             }
-            AppEvent::SearchDocumentLoaded { url, title, markdown, .. } => {
-                self.search.set_document(&url, &title, &markdown);
-                self.remove_job(JobKind::SearchFetch);
-                self.remove_job(JobKind::SearchPlan);
+            AppEvent::DdgError { msg } => {
+                self.ddg.push_error(&msg);
+                self.remove_job(JobKind::DdgFetch);
             }
-            AppEvent::SearchError { msg } => {
-                self.search.view.blocks.push(crate::buffers::Block {
-                    kind: "error".to_string(),
-                    markdown: format!("*Search Error: {msg}*"),
-                });
-                self.remove_job(JobKind::SearchFetch);
-                self.remove_job(JobKind::SearchPlan);
+            AppEvent::WikiResult { query, markdown } => {
+                self.wiki.set_result(&query, markdown);
+                self.remove_job(JobKind::WikiFetch);
+            }
+            AppEvent::WikiError { msg } => {
+                self.wiki.push_error(&msg);
+                self.remove_job(JobKind::WikiFetch);
             }
             AppEvent::ChtshDone { text } => {
                 let q = self.chtsh.last_query.clone().unwrap_or_default();
@@ -325,8 +331,17 @@ impl App {
             AppEvent::ChtshTopicLoaded { lang, topics } => {
                 if self.chtsh.scope.value().eq_ignore_ascii_case(&lang) {
                     self.chtsh.topic_list = topics;
-                    self.chtsh.last_topic_scope = Some(lang);
+                    self.chtsh.last_topic_scope = Some(lang.clone());
                     self.chtsh.refresh_suggestions();
+                }
+                if self
+                    .chtsh
+                    .pending_scope_fetch
+                    .as_deref()
+                    .map(|p| p.eq_ignore_ascii_case(&lang))
+                    .unwrap_or(false)
+                {
+                    self.chtsh.pending_scope_fetch = None;
                 }
             }
             AppEvent::ChtshPlan { .. } => {}
@@ -410,6 +425,11 @@ impl App {
         self.modal = Some(modal);
         self.modal_search.clear();
         self.modal_search_focused = false;
+        // Ensure the active provider is represented in the picker, so we never
+        // silently fall back to the ollama tab on selection.
+        if !self.provider_list.iter().any(|p| p == &self.provider_name) {
+            self.provider_list.push(self.provider_name.clone());
+        }
         if let Some(pos) = self.provider_list.iter().position(|p| p == &self.provider_name) {
             self.provider_index = pos;
         }
@@ -490,7 +510,6 @@ impl App {
         let len = match &self.modal {
             Some(Modal::ModelPicker) => self.filtered_models_with_provider().len(),
             Some(Modal::Settings) => settings_rows(),
-            Some(Modal::SearchQueryPicker(opts)) => opts.len(),
             Some(Modal::Help) => 16,
             None => 0,
         };
@@ -509,7 +528,6 @@ impl App {
         match &self.modal {
             Some(Modal::ModelPicker) => self.filtered_models().get(self.modal_index).cloned(),
             Some(Modal::Settings) => settings_row_label(self.modal_index).map(|s| s.to_string()),
-            Some(Modal::SearchQueryPicker(opts)) => opts.get(self.modal_index).cloned(),
             Some(Modal::Help) => None,
             None => None,
         }
@@ -534,24 +552,15 @@ impl App {
             }
             Some(Modal::Settings) => {
                 let sel = self.modal_index;
-                let values = [
-                    self.settings.model.clone(),
-                    self.settings.server_url.clone(),
-                    self.settings.search_provider.clone(),
-                    self.settings.search_summarize.to_string(),
-                ];
+                let values = [self.settings.model.clone()];
                 for (i, label) in SETTINGS_ROWS.iter().enumerate() {
-                    out.push(((*label).to_string(), values[i].clone(), i == sel));
-                }
-            }
-            Some(Modal::SearchQueryPicker(opts)) => {
-                for (i, opt) in opts.iter().enumerate() {
-                    out.push((opt.clone(), "".to_string(), i == self.modal_index));
+                    let value = values.get(i).cloned().unwrap_or_default();
+                    out.push(((*label).to_string(), value, i == sel));
                 }
             }
             Some(Modal::Help) => {
                 let help_entries = [
-                    ("Tab / BackTab", "Switch buffer (Chat / Search / Chtsh)"),
+                    ("Tab / BackTab", "Switch buffer (Chat / ddg / Chtsh)"),
                     ("? / /help", "Toggle this help window"),
                     ("Enter", "Submit / Fetch / Select"),
                     ("Shift+Enter", "Insert newline in prompt"),
@@ -600,15 +609,8 @@ impl App {
                         // Jump to the model picker.
                         self.open_modal(Modal::ModelPicker);
                     }
-                    Some("search-summarize") => {
-                        self.settings.search_summarize = !self.settings.search_summarize;
-                    }
                     _ => {}
                 }
-                Some(AppEvent::Tick)
-            }
-            Some(Modal::SearchQueryPicker(_)) => {
-                self.close_modal();
                 Some(AppEvent::Tick)
             }
             Some(Modal::Help) => {
@@ -621,12 +623,7 @@ impl App {
 }
 
 /// Editable rows in the settings window.
-const SETTINGS_ROWS: [&str; 4] = [
-    "model",
-    "server-url",
-    "search-provider",
-    "search-summarize",
-];
+const SETTINGS_ROWS: [&str; 1] = ["model"];
 
 /// Number of settings rows shown in the settings window.
 pub fn settings_rows() -> usize {
@@ -642,10 +639,10 @@ pub fn settings_row_label(i: usize) -> Option<&'static str> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobKind {
     Chat,
-    SearchPlan,
-    SearchFetch,
     ChtshPlan,
     ChtshFetch,
+    DdgFetch,
+    WikiFetch,
     Models,
 }
 
@@ -727,13 +724,15 @@ mod tests {
         let mut app = App::new();
         assert_eq!(app.active_buffer(), BufferId::Chat);
         app.next_buffer();
-        assert_eq!(app.active_buffer(), BufferId::Search);
+        assert_eq!(app.active_buffer(), BufferId::Ddg);
         app.next_buffer();
         assert_eq!(app.active_buffer(), BufferId::Chtsh);
         app.next_buffer();
+        assert_eq!(app.active_buffer(), BufferId::Wiki);
+        app.next_buffer();
         assert_eq!(app.active_buffer(), BufferId::Chat); // wraps
         app.prev_buffer();
-        assert_eq!(app.active_buffer(), BufferId::Chtsh); // wraps back
+        assert_eq!(app.active_buffer(), BufferId::Wiki); // wraps back
     }
 
     #[test]
@@ -744,17 +743,17 @@ mod tests {
         app.chat.view.auto_scroll = false;
         app.chat.view.scroll = 0;
 
-        app.search.view.last_max_scroll.set(100);
-        app.search.view.auto_scroll = false;
-        app.search.view.scroll = 0;
+        app.ddg.view.last_max_scroll.set(100);
+        app.ddg.view.auto_scroll = false;
+        app.ddg.view.scroll = 0;
 
         app.handle_event(AppEvent::MouseScroll { delta: -5 });
         assert_eq!(app.chat.view.scroll, 0); // clamped at zero
         app.handle_event(AppEvent::MouseScroll { delta: 3 });
         assert_eq!(app.chat.view.scroll, 3);
-        app.next_buffer(); // Search
+        app.next_buffer(); // Ddg
         app.handle_event(AppEvent::MouseScroll { delta: 2 });
-        assert_eq!(app.search.view.scroll, 2);
+        assert_eq!(app.ddg.view.scroll, 2);
         assert_eq!(app.chat.view.scroll, 3); // chat untouched
     }
 
@@ -870,16 +869,10 @@ mod tests {
     }
 
     #[test]
-    fn settings_toggle_flips_boolean_row() {
+    fn settings_model_row_jumps_to_picker() {
         let mut app = App::new();
-        app.settings.search_summarize = false;
         app.open_modal(Modal::Settings);
-        // navigate to the "search-summarize" row (index 3)
-        app.modal_index = 3;
-        app.modal_apply();
-        assert_eq!(app.settings.search_summarize, true);
-        assert_eq!(app.modal, Some(Modal::Settings));
-        // "model" row jumps to the picker
+        // "model" row (index 0) jumps to the picker.
         app.modal_index = 0;
         app.modal_apply();
         assert_eq!(app.modal, Some(Modal::ModelPicker));

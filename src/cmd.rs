@@ -9,10 +9,10 @@ pub enum Command {
     Model(String),
     /// Export the current chat as markdown to `path`.
     Export(String),
-    /// Set the search provider.
-    SearchProvider(String),
     /// Change the server endpoint URL.
     Endpoint(String),
+    /// Set the system prompt (clears chat context).
+    System(String),
     /// Open the settings window.
     Settings,
     /// Show help.
@@ -40,11 +40,9 @@ pub fn parse(line: &str) -> Option<Command> {
         "clear" => Command::Clear,
         "model" => Command::Model(rest),
         "endpoint" => Command::Endpoint(rest),
+        "system" | "sys" => Command::System(rest),
         "settings" | "config" => Command::Settings,
         "export" => Command::Export(rest),
-        "ddg" | "duckduckgo" => Command::SearchProvider("duckduckgo".into()),
-        "google" => Command::SearchProvider("google".into()),
-        "bing" => Command::SearchProvider("bing".into()),
         "exit" | "quit" | "q" => Command::Quit,
         "help" => Command::Help,
         _ => Command::Unknown(name),
@@ -61,12 +59,9 @@ pub fn autocomplete(line: &str) -> Option<&'static str> {
         "/clear",
         "/model",
         "/endpoint",
+        "/system",
         "/settings",
         "/export",
-        "/google",
-        "/bing",
-        "/ddg",
-        "/exit",
         "/help",
     ];
     let mut match_found = None;
@@ -122,6 +117,19 @@ mod tests {
         assert!(matches!(parse("/settings"), Some(Command::Settings)));
         assert!(matches!(parse("/config"), Some(Command::Settings)));
         assert!(matches!(parse("/model"), Some(Command::Model(_))));
+    }
+
+    #[test]
+    fn parses_system_prompt() {
+        match parse("/system be terse") {
+            Some(Command::System(s)) => assert_eq!(s, "be terse"),
+            _ => panic!("expected System"),
+        }
+        match parse("/sys no yap") {
+            Some(Command::System(s)) => assert_eq!(s, "no yap"),
+            _ => panic!("expected System alias"),
+        }
+        assert!(matches!(parse("/system"), Some(Command::System(s)) if s.is_empty()));
     }
 
     #[test]

@@ -6,9 +6,9 @@ pub const LINE: &[char] = &['-', '\\', '|', '/'];
 
 pub fn frame(tick: u64, kind: &JobKind) -> char {
     let frames = match kind {
-        JobKind::Chat | JobKind::SearchPlan | JobKind::ChtshPlan => BRAILLE,
+        JobKind::Chat | JobKind::ChtshPlan => BRAILLE,
         JobKind::Models => BLOCKS,
-        JobKind::SearchFetch | JobKind::ChtshFetch => LINE,
+        JobKind::ChtshFetch | JobKind::DdgFetch | JobKind::WikiFetch => LINE,
     };
     frames[(tick as usize) % frames.len()]
 }

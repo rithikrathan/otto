@@ -4,14 +4,16 @@
 
 pub mod chat;
 pub mod chtsh;
-pub mod search;
+pub mod ddg;
+pub mod wiki;
 
 /// Identity of a switchable buffer tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BufferId {
     Chat,
-    Search,
+    Ddg,
     Chtsh,
+    Wiki,
 }
 
 impl BufferId {
@@ -19,8 +21,9 @@ impl BufferId {
     pub fn label(self) -> &'static str {
         match self {
             BufferId::Chat => "Chat",
-            BufferId::Search => "Search",
+            BufferId::Ddg => "ddg",
             BufferId::Chtsh => "cht.sh",
+            BufferId::Wiki => "wiki",
         }
     }
 }
@@ -39,7 +42,9 @@ pub struct BufferState {
     /// The maximum possible scroll offset during the last render.
     pub last_max_scroll: std::cell::Cell<usize>,
     /// Cache for parsed markdown to prevent lagging.
-    pub cached_markdown: std::cell::RefCell<Option<(String, u16, ratatui::text::Text<'static>)>>,
+    pub cached_markdown: std::cell::RefCell<
+        Option<(String, u16, ratatui::text::Text<'static>, Vec<Option<String>>)>,
+    >,
 }
 
 impl Default for BufferState {

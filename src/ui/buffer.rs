@@ -30,13 +30,18 @@ fn active_document(app: &App) -> String {
                 push_block(&mut doc, Some(&prefix), &b.markdown, "\n\n---\n\n");
             }
         }
-        crate::buffers::BufferId::Search => {
-            for b in &app.search.view.blocks {
+        crate::buffers::BufferId::Ddg => {
+            for b in &app.ddg.view.blocks {
                 push_block(&mut doc, None, &b.markdown, "\n\n---\n\n");
             }
         }
         crate::buffers::BufferId::Chtsh => {
             for b in &app.chtsh.view.blocks {
+                push_block(&mut doc, None, &b.markdown, "\n\n---\n\n");
+            }
+        }
+        crate::buffers::BufferId::Wiki => {
+            for b in &app.wiki.view.blocks {
                 push_block(&mut doc, None, &b.markdown, "\n\n---\n\n");
             }
         }
@@ -64,6 +69,66 @@ fn get_ephemera_theme() -> &'static syntect::highlighting::Theme {
 fn syntect_style_to_ratatui(style: syntect::highlighting::Style) -> ratatui::style::Style {
     ratatui::style::Style::default()
         .fg(ratatui::style::Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b))
+}
+
+/// A link discovered in a rendered markdown line. `url_index` is the index of
+/// the `Line` in the rendered `Text` that this link belongs to.
+#[derive(Debug, Clone)]
+pub struct LinkHit {
+    pub url: String,
+}
+
+/// Detect the URL for a markdown line. Handles `[label](url)` and bare URLs.
+fn line_url(text: &str) -> Option<String> {
+    // [label](url) -> url
+    let mut rest = text;
+    while let Some(start) = rest.find('[') {
+        rest = &rest[start..];
+        let Some(close) = rest.find(']') else { break };
+        let after = &rest[close + 1..];
+        if let Some(openp) = after.strip_prefix('(') {
+            let url = scan_url(openp)?.trim().to_string();
+            if !url.is_empty() && (url.starts_with("http://") || url.starts_with("https://")) {
+                return Some(url);
+            }
+        }
+        rest = &rest[close + 1..];
+    }
+    // bare http(s):// URL
+    for part in text.split_whitespace() {
+        let p = part.trim_end_matches(".,;)");
+        if p.starts_with("http://") || p.starts_with("https://") {
+            return Some(p.to_string());
+        }
+    }
+    None
+}
+
+/// Read a URL starting just after the opening `(` of `[label](url)`, stopping
+/// at its matching `)`. Handles parentheses inside the URL (e.g.
+/// `https://en.wikipedia.org/wiki/Rust_(programming_language)`).
+fn scan_url(openp: &str) -> Option<&str> {
+    let mut depth = 1usize;
+    for (i, c) in openp.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(&openp[..i]);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn link_style(theme: &theme::Theme) -> ratatui::style::Style {
+    theme
+        .base()
+        .fg(ratatui::style::Color::Rgb(0x58, 0xA6, 0xFF))
+        .add_modifier(ratatui::style::Modifier::UNDERLINED)
 }
 
 fn tokenize_markdown_line(text: &str, theme: &theme::Theme) -> Vec<ratatui::text::Span<'static>> {
@@ -101,6 +166,55 @@ fn tokenize_markdown_line(text: &str, theme: &theme::Theme) -> Vec<ratatui::text
                 code_text.push(ic);
             }
             spans.push(Span::styled(code_text, theme.markdown_code().bg(ratatui::style::Color::Rgb(40, 40, 40))));
+        } else if c == '[' {
+            // Possible [label](url) markdown link.
+            if !current.is_empty() {
+                spans.push(Span::raw(current.clone()));
+                current.clear();
+            }
+            let mut label = String::new();
+            let mut is_link = false;
+            let mut url = String::new();
+            for ic in chars.by_ref() {
+                if ic == ']' {
+                    if chars.peek() == Some(&'(') {
+                        chars.next(); // consume '('
+                        // Read the URL, balancing parentheses so that `)` inside
+                        // the URL (e.g. `Rust_(programming_language)`) stays part
+                        // of it and only the closing `)` ends the link.
+                        let mut depth = 0u32;
+                        for uc in chars.by_ref() {
+                            match uc {
+                                '(' => {
+                                    depth += 1;
+                                    url.push(uc);
+                                }
+                                ')' if depth == 0 => {
+                                    is_link = true;
+                                    break;
+                                }
+                                ')' => {
+                                    depth -= 1;
+                                    url.push(uc);
+                                }
+                                _ => url.push(uc),
+                            }
+                        }
+                    }
+                    break;
+                }
+                label.push(ic);
+            }
+            if is_link {
+                spans.push(Span::styled(
+                    label.clone(),
+                    link_style(theme),
+                ));
+            } else {
+                // Not a link: re-emit the literal text we consumed.
+                let literal = format!("[{label}]");
+                spans.push(Span::raw(literal));
+            }
         } else {
             current.push(c);
         }
@@ -179,9 +293,16 @@ fn wrap_spans(
     lines
 }
 
-fn parse_markdown(doc: &str, theme: &theme::Theme, width: u16) -> ratatui::text::Text<'static> {
+/// Returns the rendered `Text` plus a per-line URL map (same length as
+/// `Text.lines`; `None` when that line is not a clickable link).
+fn parse_markdown(
+    doc: &str,
+    theme: &theme::Theme,
+    width: u16,
+) -> (ratatui::text::Text<'static>, Vec<Option<String>>) {
     use ratatui::text::{Line, Span};
     let mut lines = Vec::new();
+    let mut urls: Vec<Option<String>> = Vec::new();
     let mut in_code_block = false;
 
     let width_usize = width as usize;
@@ -198,12 +319,13 @@ fn parse_markdown(doc: &str, theme: &theme::Theme, width: u16) -> ratatui::text:
                     bottom.push('╯');
                 }
                 lines.push(Line::from(Span::styled(bottom, theme.muted())));
+                urls.push(None);
                 in_code_block = false;
                 highlighter = None;
             } else {
                 in_code_block = true;
                 let code_lang = trimmed.strip_prefix("```").unwrap_or("").trim().to_string();
-                
+
                 let mut top = String::from("╭─ ");
                 if !code_lang.is_empty() {
                     top.push_str(&code_lang);
@@ -215,6 +337,7 @@ fn parse_markdown(doc: &str, theme: &theme::Theme, width: u16) -> ratatui::text:
                     top.push('╮');
                 }
                 lines.push(Line::from(Span::styled(top, theme.muted())));
+                urls.push(None);
 
                 let lang_clean = code_lang.to_lowercase();
                 let ps = get_syntax_set();
@@ -249,47 +372,67 @@ fn parse_markdown(doc: &str, theme: &theme::Theme, width: u16) -> ratatui::text:
         if in_code_block {
             let mut text = line.to_string();
             text.push('\n'); // Provide newline so syntect terminates line comments properly!
-            
+
             if let Some(ref mut hl) = highlighter {
                 if let Ok(regions) = hl.highlight_line(&text, get_syntax_set()) {
-                    lines.extend(wrap_spans(regions, width_usize, theme));
+                    let wrapped = wrap_spans(regions, width_usize, theme);
+                    let n = wrapped.len();
+                    lines.extend(wrapped);
+                    urls.extend(std::iter::repeat(None).take(n));
                     continue;
                 }
             }
-            
+
             // Fallback if highlight fails
             let regions = vec![(syntect::highlighting::Style::default(), text.as_str())];
-            lines.extend(wrap_spans(regions, width_usize, theme));
+            let wrapped = wrap_spans(regions, width_usize, theme);
+            let n = wrapped.len();
+            lines.extend(wrapped);
+            urls.extend(std::iter::repeat(None).take(n));
             continue;
         }
 
         if trimmed == "---" {
             let hr = "─".repeat(width_usize);
             lines.push(Line::from(Span::styled(hr, theme.muted())));
+            urls.push(None);
             continue;
         }
 
         if trimmed.starts_with("# ") {
             let header = trimmed.strip_prefix("# ").unwrap_or("").to_string();
             lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::Rgb(255, 30, 0)))));
+            urls.push(None);
             continue;
         } else if trimmed.starts_with("## ") {
             let header = trimmed.strip_prefix("## ").unwrap_or("").to_string();
             lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::Rgb(255, 66, 15)))));
+            urls.push(None);
             continue;
         } else if trimmed.starts_with("### ") {
             let header = trimmed.strip_prefix("### ").unwrap_or("").to_string();
             lines.push(Line::from(Span::styled(header, theme.emphasis().fg(ratatui::style::Color::Rgb(255, 99, 71)))));
+            urls.push(None);
             continue;
         }
 
+        let url = line_url(line);
         lines.push(Line::from(tokenize_markdown_line(line, theme)));
+        urls.push(url);
     }
-    ratatui::text::Text::from(lines)
+    (ratatui::text::Text::from(lines), urls)
+}
+
+/// A clickable link region in buffer-local content row coordinates.
+#[derive(Debug, Clone)]
+pub struct LinkRect {
+    pub row0: u16,
+    pub row1: u16,
+    pub url: String,
 }
 
 /// Draw the scrollable buffer region for the active buffer.
-pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
+pub fn draw(frame: &mut Frame, app: &mut App, area: Rect) {
     let theme = theme::current();
 
     let doc = active_document(app);
@@ -297,28 +440,39 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
 
     let active_view = match app.active_buffer() {
         crate::buffers::BufferId::Chat => &app.chat.view,
-        crate::buffers::BufferId::Search => &app.search.view,
+        crate::buffers::BufferId::Ddg => &app.ddg.view,
         crate::buffers::BufferId::Chtsh => &app.chtsh.view,
+        crate::buffers::BufferId::Wiki => &app.wiki.view,
     };
 
     let mut cache = active_view.cached_markdown.borrow_mut();
     if cache.is_none() || cache.as_ref().unwrap().0 != doc || cache.as_ref().unwrap().1 != inner_width {
-        let parsed = parse_markdown(&doc, &theme, inner_width);
-        *cache = Some((doc.clone(), inner_width, parsed));
+        let (parsed, urls) = parse_markdown(&doc, &theme, inner_width);
+        *cache = Some((doc.clone(), inner_width, parsed, urls));
     }
-
-    let md = cache.as_ref().unwrap().2.clone();
+    let cached = cache.as_ref().unwrap();
+    let md = cached.2.clone();
+    let line_urls = cached.3.clone();
 
     let mut total_lines = 0;
-    for line in &md.lines {
+    let mut link_layout: Vec<LinkRect> = Vec::new();
+    for (i, line) in md.lines.iter().enumerate() {
         let w = line.width() as u16;
-        if w == 0 {
-            total_lines += 1;
+        let rows = if w == 0 {
+            1
         } else {
-            total_lines += (w + inner_width - 1) / inner_width;
+            (w + inner_width - 1) / inner_width
+        };
+        if let Some(url) = &line_urls[i] {
+            link_layout.push(LinkRect {
+                row0: total_lines as u16,
+                row1: (total_lines + rows) as u16 - 1,
+                url: url.clone(),
+            });
         }
+        total_lines += rows;
     }
-    
+
     let max_scroll = total_lines.saturating_sub(area.height) as usize;
     active_view.last_max_scroll.set(max_scroll);
 
@@ -326,7 +480,13 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
         max_scroll
     } else {
         active_view.scroll.min(max_scroll)
-    };
+    } as u16;
+
+    // Expose buffer geometry + link map for mouse click lookups.
+    app.buffer_area = (area.x, area.y, area.width, area.height);
+    app.link_scroll_y = scroll_y;
+    app.link_inner_width = inner_width;
+    app.link_layout = link_layout;
 
     let block = Block::default()
         .borders(Borders::LEFT)
@@ -335,7 +495,188 @@ pub fn draw(frame: &mut Frame, app: &App, area: Rect) {
     let paragraph = Paragraph::new(md)
         .block(block)
         .wrap(Wrap { trim: false })
-        .scroll((scroll_y as u16, 0));
+        .scroll((scroll_y, 0));
 
     frame.render_widget(paragraph, area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn line_url_extracts_markdown_link() {
+        assert_eq!(
+            line_url("- [Nikola Tesla](https://en.wikipedia.org/wiki/Nikola_Tesla)"),
+            Some("https://en.wikipedia.org/wiki/Nikola_Tesla".to_string())
+        );
+    }
+
+    #[test]
+    fn line_url_extracts_bare_url() {
+        assert_eq!(
+            line_url("see https://example.com/page"),
+            Some("https://example.com/page".to_string())
+        );
+    }
+
+    #[test]
+    fn line_url_none_without_link() {
+        assert_eq!(line_url("just some plain text here"), None);
+        assert_eq!(line_url("- docker is a tool"), None);
+    }
+
+    #[test]
+    fn line_url_keeps_parentheses_inside_url() {
+        // Wikipedia disambiguation URLs contain `(...)` inside the URL; the
+        // parser must keep it and only stop at the final `)`.
+        let url = "https://en.wikipedia.org/wiki/Rust_(programming_language)";
+        assert_eq!(
+            line_url(&format!("- [Rust (programming language)]({url})")),
+            Some(url.to_string())
+        );
+    }
+
+    #[test]
+    fn tokenizer_styles_markdown_links_underlined_blue() {
+        let t = theme::current();
+        let spans = tokenize_markdown_line("- [label](https://x.io)", &t);
+        // A link span exists with a blue, underlined style.
+        let link = spans.iter().find(|s| s.content == "label");
+        assert!(link.is_some(), "expected a styled label span");
+        let link = link.unwrap();
+        assert!(link.style.fg.is_some());
+        assert!(
+            link.style
+                .add_modifier
+                .contains(ratatui::style::Modifier::UNDERLINED)
+        );
+    }
+
+    #[test]
+    fn tokenizer_keeps_parentheses_inside_url_and_label() {
+        let t = theme::current();
+        let url = "https://en.wikipedia.org/wiki/Rust_(programming_language)";
+        let line = format!("- [Rust (programming language)]({url})");
+        let spans = tokenize_markdown_line(&line, &t);
+        // The label keeps its inner parentheses and is styled as a link.
+        let link = spans.iter().find(|s| s.content == "Rust (programming language)");
+        assert!(link.is_some(), "expected parenthesized label span");
+        let link = link.unwrap();
+        assert!(link.style.add_modifier.contains(ratatui::style::Modifier::UNDERLINED));
+        // line_url recovers the full URL including the parenthesized suffix.
+        assert_eq!(line_url(&line), Some(url.to_string()));
+    }
+
+    #[test]
+    fn wiki_markdown_title_is_a_link_not_raw_markup() {
+        use crate::wiki;
+        let md = wiki::render_markdown(
+            "navier strokes",
+            &[wiki::WikiHit {
+                title: "Navier–Stokes equations".into(),
+                url: "https://en.wikipedia.org/wiki/Navier%E2%80%93Stokes_equations".into(),
+            }],
+            Some(&wiki::WikiSummary {
+                title: "Navier–Stokes equations".into(),
+                extract: "The Navier–Stokes equations describe the motion of viscous fluids."
+                    .into(),
+                url: "https://en.wikipedia.org/wiki/Navier%E2%80%93Stokes_equations".into(),
+            }),
+        );
+        // The title is a clean clickable markdown link, not leaked `[[ ]]`
+        // wiki markup or a bold-only (non-clickable) heading.
+        assert!(md.contains("[Navier–Stokes equations](https://"));
+        assert!(!md.contains("[["));
+
+        let t = theme::current();
+        let (text, urls) = parse_markdown(&md, &t, 80);
+        let urls: Vec<_> = urls.iter().flatten().cloned().collect();
+        // Every extracted URL must be complete (nothing truncated by `)`),
+        // including the top title link.
+        assert!(urls.iter().any(|u| u == "https://en.wikipedia.org/wiki/Navier%E2%80%93Stokes_equations"));
+        for u in &urls {
+            assert!(u.ends_with("_equations"), "got truncated url: {u}");
+        }
+    }
+
+    #[test]
+    fn click_mapping_hits_wiki_links() {
+        use crate::app::App;
+        use crate::wiki;
+        use ratatui::backend::TestBackend;
+
+        // Populate the wiki buffer with a realistic result.
+        let mut app = App::new();
+        app.active = app
+            .tabs
+            .iter()
+            .position(|t| *t == crate::buffers::BufferId::Wiki)
+            .unwrap();
+        let md = wiki::render_markdown(
+            "navier strokes",
+            &[
+                wiki::WikiHit {
+                    title: "Navier–Stokes equations".into(),
+                    url: "https://en.wikipedia.org/wiki/Navier%E2%80%93Stokes_equations".into(),
+                },
+                wiki::WikiHit {
+                    title: "Rust (programming language)".into(),
+                    url: "https://en.wikipedia.org/wiki/Rust_(programming_language)".into(),
+                },
+            ],
+            Some(&wiki::WikiSummary {
+                title: "Navier–Stokes equations".into(),
+                extract: "The Navier–Stokes equations describe the motion of viscous fluids."
+                    .into(),
+                url: "https://en.wikipedia.org/wiki/Navier%E2%80%93Stokes_equations".into(),
+            }),
+        );
+        app.wiki.set_result("navier strokes", md);
+
+        // Render with a test backend (draw populates link geometry on app).
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(100, 40)).unwrap();
+        terminal
+            .draw(|f| {
+                let area = ratatui::layout::Rect::new(0, 0, 100, 40);
+                super::draw(f, &mut app, area);
+            })
+            .unwrap();
+
+        let (ax, ay, aw, _ah) = app.buffer_area;
+        assert!(!app.link_layout.is_empty(), "expected link_layout to be populated");
+
+        // Simulate the exact open_clicked_link mapping for every link target.
+        let mut found: Vec<String> = Vec::new();
+        for lr in &app.link_layout {
+            // Click the first row of the link, one column in from the border.
+            let content_row = lr.row0;
+            let local_row = content_row.saturating_sub(app.link_scroll_y);
+            let row = ay + local_row;
+            let col = ax + 1;
+            // Guard: only if on-screen.
+            if row >= ay && row < ay + _ah && col >= ax && col < ax + aw {
+                let local_col = col - ax;
+                if local_col >= 1 {
+                    let cr = local_row + app.link_scroll_y;
+                    if let Some(lr2) = app
+                        .link_layout
+                        .iter()
+                        .find(|lr| cr >= lr.row0 && cr <= lr.row1)
+                    {
+                        found.push(lr2.url.clone());
+                    }
+                }
+            }
+        }
+        // The source link and both More-articles links should all be found.
+        assert!(
+            found.iter().any(|u| u.contains("Navier") && u.contains("_equations")),
+            "source/wiki link not clickable, found: {found:?}"
+        );
+        assert!(
+            found.iter().any(|u| u.contains("Rust_(programming_language)")),
+            "paren-disambiguation link not clickable, found: {found:?}"
+        );
+    }
 }

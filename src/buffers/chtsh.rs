@@ -211,6 +211,8 @@ pub struct ChtshBuffer {
     pub topic_list: Vec<String>,
     pub last_topic_scope: Option<String>,
     pub last_query: Option<String>,
+    /// Scope currently being fetched in the background (coalescing guard).
+    pub pending_scope_fetch: Option<String>,
 }
 
 impl ChtshBuffer {
@@ -254,6 +256,7 @@ impl ChtshBuffer {
         self.view.blocks.clear();
         self.view.scroll = 0;
         self.last_query = None;
+        self.pending_scope_fetch = None;
     }
 
     pub fn toggle_focus(&mut self) {

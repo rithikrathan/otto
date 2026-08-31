@@ -5,11 +5,11 @@ mod buffers;
 mod chtsh;
 mod cmd;
 mod config;
+mod ddg;
 mod event;
 mod ollama;
-mod search;
 mod ui;
-
+mod wiki;
 use std::io;
 
 use anyhow::{Context, Result};
@@ -25,11 +25,14 @@ fn main() -> Result<()> {
     let (tx, rx) = channel();
 
     let mut app = App::new();
-    app.model_name = config.model.name.clone();
-    app.settings.model = config.model.name.clone();
-    app.settings.server_url = config.server.url.clone();
-    app.settings.search_provider = config.search.provider.clone();
-    app.settings.search_summarize = config.search.summarize;
+    let default_model = config::default_model_name().to_string();
+    app.model_name = default_model.clone();
+    app.settings.model = default_model;
+    app.system_prompt = if config.system_prompt.trim().is_empty() {
+        config::default_system_prompt().to_string()
+    } else {
+        config.system_prompt.clone()
+    };
 
     crossterm::terminal::enable_raw_mode().context("enable raw mode")?;
     let mut term = Terminal::new(CrosstermBackend::new(io::stdout())).context("create terminal")?;
@@ -141,6 +144,14 @@ async fn run(
                     crossterm::event::MouseEventKind::ScrollDown => {
                         let _ = tx3.send(AppEvent::MouseScroll { delta: 3 });
                     }
+                    crossterm::event::MouseEventKind::Down(
+                        crossterm::event::MouseButton::Left,
+                    ) => {
+                        let _ = tx3.send(AppEvent::MouseClick {
+                            row: m.row,
+                            col: m.column,
+                        });
+                    }
                     _ => {}
                 },
                 _ => {}
@@ -165,6 +176,9 @@ async fn run(
                         Some(AppEvent::Input(key)) => {
                             handle_key(app, key, &tx, config, &active_target)?;
                         }
+                        Some(AppEvent::MouseClick { row, col }) => {
+                            open_clicked_link(app, row, col);
+                        }
                         Some(other) => {
                             app.handle_event(other);
                         }
@@ -177,6 +191,9 @@ async fn run(
             match rx.recv().await {
                 Some(AppEvent::Input(key)) => {
                     handle_key(app, key, &tx, config, &active_target)?;
+                }
+                Some(AppEvent::MouseClick { row, col }) => {
+                    open_clicked_link(app, row, col);
                 }
                 Some(other) => {
                     app.handle_event(other);
@@ -219,9 +236,6 @@ fn handle_key(
         }
         _ if app.active_buffer() == crate::buffers::BufferId::Chtsh => {
             return handle_chtsh_key(app, key, tx, config);
-        }
-        _ if app.active_buffer() == crate::buffers::BufferId::Search => {
-            return handle_search_key(app, key, tx, config);
         }
         KeyCode::F(1) => {
             app.open_modal(app::Modal::Help);
@@ -373,11 +387,6 @@ fn handle_modal_key(
             KeyCode::Enter => {
                 app.modal_search_focused = false;
                 if let Some(ev) = app.modal_apply() {
-                    config.server.provider = app.provider_name.clone();
-                    config.model.name = app.model_name.clone();
-                    config.server.url = config.resolve_url(&app.provider_name);
-                    config.server.api_key = config.resolve_api_key(&app.provider_name);
-                    let _ = config.save();
                     let _ = tx.send(ev);
 
                     let new_target = (
@@ -449,11 +458,6 @@ fn handle_modal_key(
         }
         KeyCode::Enter => {
             if let Some(ev) = app.modal_apply() {
-                config.server.provider = app.provider_name.clone();
-                config.model.name = app.model_name.clone();
-                config.server.url = config.resolve_url(&app.provider_name);
-                config.server.api_key = config.resolve_api_key(&app.provider_name);
-                let _ = config.save();
                 let _ = tx.send(ev);
 
                 let new_target = (
@@ -498,9 +502,26 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &mut config::Con
             cmd::Command::Clear => {
                 match app.active_buffer() {
                     crate::buffers::BufferId::Chat => app.chat.clear(),
-                    crate::buffers::BufferId::Search => app.search.clear(),
+                    crate::buffers::BufferId::Ddg => app.ddg.clear(),
                     crate::buffers::BufferId::Chtsh => app.chtsh.clear(),
+                    crate::buffers::BufferId::Wiki => app.wiki.clear(),
                 }
+                Ok(())
+            }
+            cmd::Command::System(prompt) => {
+                let prompt = prompt.trim();
+                if !prompt.is_empty() {
+                    app.system_prompt = prompt.to_string();
+                    config.system_prompt = prompt.to_string();
+                    let _ = config.save();
+                }
+                // Reset the conversation context and start fresh.
+                app.chat.clear();
+                app.tokens.reset();
+                app.chat.view.blocks.push(crate::buffers::Block {
+                    kind: "info".to_string(),
+                    markdown: format!("**System prompt set** — context cleared."),
+                });
                 Ok(())
             }
             cmd::Command::Model(arg) => {
@@ -509,8 +530,6 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &mut config::Con
                 } else {
                     app.model_name = arg.clone();
                     app.settings.model = arg.clone();
-                    config.model.name = arg;
-                    let _ = config.save();
                 }
                 Ok(())
             }
@@ -523,12 +542,19 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &mut config::Con
                 Ok(())
             }
             cmd::Command::Endpoint(url) if !url.is_empty() => {
-                app.settings.server_url = url.clone();
-                config.server.url = url;
+                // Update the active provider's URL and keep read-only state in sync.
+                let provider = app.provider_name.clone();
+                match provider.as_str() {
+                    "groq" => config.providers.groq.url = url.clone(),
+                    "gemini" => config.providers.gemini.url = url.clone(),
+                    "nvidia" => config.providers.nvidia.url = url.clone(),
+                    _ => config.providers.ollama.url = url.clone(),
+                }
                 let _ = config.save();
+                let resolved = config.resolve_url(&provider);
                 app.chat.view.blocks.push(crate::buffers::Block {
                     kind: "markdown".to_string(),
-                    markdown: format!("**System:** Endpoint updated to `{}`", config.server.url),
+                    markdown: format!("**System:** `{provider}` endpoint updated to `{resolved}`"),
                 });
                 app.chat.view.scroll = 9999;
                 Ok(())
@@ -540,8 +566,63 @@ fn submit(app: &mut App, shift: bool, tx: &EventSender, config: &mut config::Con
 
     match app.active_buffer() {
         crate::buffers::BufferId::Chat => run_chat(app, &text, tx, config),
-        crate::buffers::BufferId::Search => trigger_search(app, &text, tx, config),
+        crate::buffers::BufferId::Ddg => trigger_ddg(app, &text, tx, config),
         crate::buffers::BufferId::Chtsh => trigger_chtsh(app, &text, tx, config),
+        crate::buffers::BufferId::Wiki => trigger_wiki(app, &text, tx, config),
+    }
+}
+
+/// Open the URL under a mouse click in the active buffer, if any.
+fn open_clicked_link(app: &App, row: u16, col: u16) {
+    // Don't click through a floating modal.
+    if app.modal.is_some() {
+        return;
+    }
+    if let Some(url) = hit_link(app, row, col) {
+        open_url(&url);
+    }
+}
+
+/// Map a terminal mouse `(row, col)` to the URL under it in the active buffer,
+/// or `None` if the click hits no link (or is outside the buffer / on the
+/// left border). Pure mapping, so it is unit-testable.
+fn hit_link(app: &App, row: u16, col: u16) -> Option<String> {
+    let (ax, ay, aw, _ah) = app.buffer_area;
+    if row < ay || col < ax || col >= ax + aw {
+        return None;
+    }
+    let local_row = row - ay;
+    let local_col = col - ax;
+    // Skip the left border column.
+    if local_col < 1 {
+        return None;
+    }
+    let content_row = local_row + app.link_scroll_y;
+    app.link_layout
+        .iter()
+        .find(|lr| content_row >= lr.row0 && content_row <= lr.row1)
+        .map(|lr| lr.url.clone())
+}
+
+/// Open a URL in the system default browser without printing to the terminal
+/// (which would corrupt the TUI) and without blocking the app.
+fn open_url(url: &str) {
+    use std::process::Stdio;
+    let mut cmd = std::process::Command::new(match std::env::consts::OS {
+        "windows" => "cmd",
+        "macos" => "open",
+        _ => "xdg-open",
+    });
+    if std::env::consts::OS == "windows" {
+        cmd.args(["/c", "start", "", url]);
+    } else {
+        cmd.arg(url);
+    }
+    cmd.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    if let Err(e) = cmd.spawn() {
+        eprintln!("failed to open URL {url}: {e}");
     }
 }
 
@@ -553,7 +634,7 @@ fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &mut config::Co
     app.chat.history.clear();
     app.chat.history.push(ChatMessage {
         role: "system".into(),
-        content: "You are an expert AI assistant. Assume the user is an expert. Do not explain code or concepts unless explicitly asked. Get straight to the point. Give concise, reliable, and direct answers. No yapping. Format output using elegant markdown.".into(),
+        content: app.system_prompt.clone(),
     });
 
     app.chat.history.push(ChatMessage {
@@ -598,57 +679,40 @@ fn run_chat(app: &mut App, text: &str, tx: &EventSender, config: &mut config::Co
     Ok(())
 }
 
-/// Kick off a documentation search: hybrid SQLite FTS5 + remote provider.
-fn trigger_search(
+/// Fetch the DuckDuckGo Instant Answer for a query and render it in the ddg buffer.
+fn trigger_ddg(
     app: &mut App,
     query: &str,
     tx: &EventSender,
-    config: &mut config::Config,
+    _config: &mut config::Config,
 ) -> Result<()> {
     let clean_query = query.trim().to_string();
     if clean_query.is_empty() {
         return Ok(());
     }
-    app.search.last_query = Some(clean_query.clone());
-    app.busy.push(app::JobKind::SearchFetch);
+    app.busy.push(app::JobKind::DdgFetch);
 
     let tx = tx.clone();
     let q = clean_query.clone();
-    let sources = search::Source::from_config(config);
-    let max_results = config.search.max_results;
-
     let handle = tokio::spawn(async move {
-        let doc_store = match search::DocStore::open_default() {
-            Ok(store) => store,
-            Err(e) => {
+        let _ = tx.send(AppEvent::MarkBusy {
+            job: app::JobKind::DdgFetch,
+            on: true,
+        });
+        match ddg::answer(&q).await {
+            Ok(markdown) => {
                 let _ = tx.send(AppEvent::MarkBusy {
-                    job: app::JobKind::SearchFetch,
+                    job: app::JobKind::DdgFetch,
                     on: false,
                 });
-                let _ = tx.send(AppEvent::SearchError { msg: e.to_string() });
-                return;
-            }
-        };
-
-        let provider = search::DuckDuckGoDocsProvider::new();
-
-        match search::hybrid_search(&q, &doc_store, &provider, &sources, max_results).await {
-            Ok(results) => {
-                let _ = tx.send(AppEvent::MarkBusy {
-                    job: app::JobKind::SearchFetch,
-                    on: false,
-                });
-                let _ = tx.send(AppEvent::SearchResultsLoaded {
-                    query: q,
-                    results,
-                });
+                let _ = tx.send(AppEvent::DdgResult { query: q, markdown });
             }
             Err(e) => {
                 let _ = tx.send(AppEvent::MarkBusy {
-                    job: app::JobKind::SearchFetch,
+                    job: app::JobKind::DdgFetch,
                     on: false,
                 });
-                let _ = tx.send(AppEvent::SearchError { msg: e.to_string() });
+                let _ = tx.send(AppEvent::DdgError { msg: e.to_string() });
             }
         }
     });
@@ -656,204 +720,45 @@ fn trigger_search(
     Ok(())
 }
 
-/// Open and render a specific documentation URL from cache or remote HTML extraction.
-fn trigger_open_document(
+/// Fetch a Wikipedia quick-lookup for a query and render it in the wiki buffer.
+fn trigger_wiki(
     app: &mut App,
-    url: &str,
+    query: &str,
     tx: &EventSender,
-    config: &config::Config,
+    _config: &mut config::Config,
 ) -> Result<()> {
-    let target_url = url.trim().to_string();
-    if target_url.is_empty() {
+    let clean_query = query.trim().to_string();
+    if clean_query.is_empty() {
         return Ok(());
     }
-    app.busy.push(app::JobKind::SearchFetch);
+    app.busy.push(app::JobKind::WikiFetch);
 
     let tx = tx.clone();
-    let u = target_url.clone();
-    let sources = search::Source::from_config(config);
+    let q = clean_query.clone();
     let handle = tokio::spawn(async move {
-        let doc_store = match search::DocStore::open_default() {
-            Ok(store) => store,
-            Err(e) => {
+        let _ = tx.send(AppEvent::MarkBusy {
+            job: app::JobKind::WikiFetch,
+            on: true,
+        });
+        match wiki::lookup(&q).await {
+            Ok(markdown) => {
                 let _ = tx.send(AppEvent::MarkBusy {
-                    job: app::JobKind::SearchFetch,
+                    job: app::JobKind::WikiFetch,
                     on: false,
                 });
-                let _ = tx.send(AppEvent::SearchError { msg: e.to_string() });
-                return;
-            }
-        };
-
-        match search::fetch_and_process_document(&u, &doc_store, &sources).await {
-            Ok((doc, from_cache)) => {
-                let _ = tx.send(AppEvent::MarkBusy {
-                    job: app::JobKind::SearchFetch,
-                    on: false,
-                });
-                let _ = tx.send(AppEvent::SearchDocumentLoaded {
-                    url: doc.url,
-                    title: doc.title,
-                    markdown: doc.markdown,
-                    from_cache,
-                });
+                let _ = tx.send(AppEvent::WikiResult { query: q, markdown });
             }
             Err(e) => {
                 let _ = tx.send(AppEvent::MarkBusy {
-                    job: app::JobKind::SearchFetch,
+                    job: app::JobKind::WikiFetch,
                     on: false,
                 });
-                let _ = tx.send(AppEvent::SearchError { msg: e.to_string() });
+                let _ = tx.send(AppEvent::WikiError { msg: e.to_string() });
             }
         }
     });
     app.bg_task = Some(handle);
     Ok(())
-}
-
-fn handle_search_key(
-    app: &mut App,
-    key: crossterm::event::KeyEvent,
-    tx: &EventSender,
-    config: &mut config::Config,
-) -> Result<()> {
-    if app.prompt.is_empty() {
-        match key.code {
-            KeyCode::Up => {
-                app.search.prev_result();
-                return Ok(());
-            }
-            KeyCode::Down => {
-                app.search.next_result();
-                return Ok(());
-            }
-            KeyCode::Enter => {
-                if app.search.mode == buffers::search::SearchMode::Results {
-                    if let Some(item) = app.search.selected_item().cloned() {
-                        trigger_open_document(app, &item.url, tx, config)?;
-                        return Ok(());
-                    }
-                }
-            }
-            KeyCode::Esc | KeyCode::Char('b') => {
-                if app.search.back_to_results() {
-                    return Ok(());
-                }
-            }
-            KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
-                if app.search.mode == buffers::search::SearchMode::Results {
-                    let idx = (c as usize) - ('1' as usize);
-                    if let Some(item) = app.search.results.get(idx).cloned() {
-                        app.search.selected_result = idx;
-                        app.search.render_results_view();
-                        trigger_open_document(app, &item.url, tx, config)?;
-                        return Ok(());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-
-    match key.code {
-        KeyCode::Enter => {
-            if key.modifiers.contains(KeyModifiers::SHIFT) {
-                app.prompt.insert_char('\n');
-            } else {
-                submit(app, false, tx, config)?;
-            }
-            Ok(())
-        }
-        KeyCode::PageUp | KeyCode::PageDown => {
-            let delta = match key.code {
-                KeyCode::PageUp => -10i32,
-                _ => 10i32,
-            };
-            let _ = tx.send(AppEvent::MouseScroll { delta });
-            Ok(())
-        }
-        KeyCode::Tab => {
-            app.next_buffer();
-            Ok(())
-        }
-        KeyCode::BackTab => {
-            app.prev_buffer();
-            Ok(())
-        }
-        KeyCode::F(1) => {
-            app.open_modal(app::Modal::Help);
-            Ok(())
-        }
-        KeyCode::Char('?') if app.prompt.is_empty() => {
-            app.open_modal(app::Modal::Help);
-            Ok(())
-        }
-        KeyCode::Esc => {
-            if !app.prompt.is_empty() {
-                app.prompt.reset();
-            } else if app.search.back_to_results() {
-                // Back to results
-            }
-            Ok(())
-        }
-        KeyCode::Char('w') | KeyCode::Char('h') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-            app.prompt.delete_word_backward();
-            Ok(())
-        }
-        KeyCode::Backspace => {
-            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
-                app.prompt.delete_word_backward();
-            } else {
-                app.prompt.delete_backward();
-            }
-            Ok(())
-        }
-        KeyCode::Delete => {
-            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
-                app.prompt.delete_word_forward();
-            } else {
-                app.prompt.delete_forward();
-            }
-            Ok(())
-        }
-        KeyCode::Left => {
-            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
-                app.prompt.move_word_backward();
-            } else {
-                app.prompt.move_left();
-            }
-            Ok(())
-        }
-        KeyCode::Right => {
-            if key.modifiers.contains(KeyModifiers::CONTROL) || key.modifiers.contains(KeyModifiers::ALT) {
-                app.prompt.move_word_forward();
-            } else {
-                app.prompt.move_right();
-            }
-            Ok(())
-        }
-        KeyCode::Up | KeyCode::Down => {
-            let before = app.prompt.cursor;
-            if key.code == KeyCode::Up {
-                app.prompt.move_up();
-            } else {
-                app.prompt.move_down();
-            }
-            if app.prompt.cursor == before {
-                if key.code == KeyCode::Up {
-                    app.history_back();
-                } else {
-                    app.history_forward();
-                }
-            }
-            Ok(())
-        }
-        _ => {
-            let width = app.prompt.width;
-            app.prompt.key(key.code, width);
-            Ok(())
-        }
-    }
 }
 
 fn handle_chtsh_key(
@@ -963,13 +868,7 @@ fn handle_chtsh_key(
                 app.chtsh.accept_suggestion();
                 let new_scope = app.chtsh.scope.value().to_string();
                 if new_scope != old_scope && !new_scope.is_empty() {
-                    let tx = tx.clone();
-                    tokio::spawn(async move {
-                        let client = chtsh::ChtShClient::new();
-                        if let Ok(topics) = client.fetch_topic_list(&new_scope).await {
-                            let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: new_scope, topics });
-                        }
-                    });
+                    fetch_topic_coalesced(app, &new_scope, tx);
                 }
             } else {
                 app.chtsh.insert_char(' ');
@@ -984,13 +883,7 @@ fn handle_chtsh_key(
             app.chtsh.insert_char(c);
             if app.chtsh.focus == buffers::chtsh::ChtshFocus::Scope && !app.chtsh.scope.is_empty() {
                 let scope = app.chtsh.scope.value().to_string();
-                let tx = tx.clone();
-                tokio::spawn(async move {
-                    let client = chtsh::ChtShClient::new();
-                    if let Ok(topics) = client.fetch_topic_list(&scope).await {
-                        let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: scope, topics });
-                    }
-                });
+                fetch_topic_coalesced(app, &scope, tx);
             }
             return Ok(());
         }
@@ -1005,6 +898,42 @@ fn handle_chtsh_key(
         _ => {}
     }
     Ok(())
+}
+
+/// Fetch a cht.sh topic list, coalescing concurrent requests for the same
+/// scope so we don't fire a network call on every keystroke.
+fn fetch_topic_coalesced(app: &mut App, scope: &str, tx: &EventSender) {
+    if scope.trim().len() < 2 {
+        return;
+    }
+    let scope = scope.trim().to_string();
+    if app
+        .chtsh
+        .pending_scope_fetch
+        .as_deref()
+        .map(|p| p.eq_ignore_ascii_case(&scope))
+        .unwrap_or(false)
+    {
+        return;
+    }
+    if app
+        .chtsh
+        .last_topic_scope
+        .as_deref()
+        .map(|p| p.eq_ignore_ascii_case(&scope))
+        .unwrap_or(false)
+    {
+        // Already loaded; no need to refetch.
+        return;
+    }
+    app.chtsh.pending_scope_fetch = Some(scope.clone());
+    let tx = tx.clone();
+    tokio::spawn(async move {
+        let client = chtsh::ChtShClient::new();
+        if let Ok(topics) = client.fetch_topic_list(&scope).await {
+            let _ = tx.send(AppEvent::ChtshTopicLoaded { lang: scope, topics });
+        }
+    });
 }
 
 fn trigger_chtsh_direct(app: &mut App, tx: &EventSender) -> Result<()> {
@@ -1071,4 +1000,83 @@ fn export_chat(app: &App, path: &str) -> Result<()> {
     }
     std::fs::write(path, md).with_context(|| format!("write export to {path}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    /// Build an App whose wiki buffer holds a rendered result and whose link
+    /// geometry has been populated by an actual draw pass.
+    fn app_rendered_wiki() -> App {
+        let mut app = App::new();
+        let tabs = app.tabs.clone();
+        app.active = tabs
+            .iter()
+            .position(|t| *t == crate::buffers::BufferId::Wiki)
+            .unwrap();
+
+        let md = crate::wiki::render_markdown(
+            "navier strokes",
+            &[
+                crate::wiki::WikiHit {
+                    title: "Navier–Stokes equations".into(),
+                    url: "https://en.wikipedia.org/wiki/Navier%E2%80%93Stokes_equations".into(),
+                },
+                crate::wiki::WikiHit {
+                    title: "Rust (programming language)".into(),
+                    url: "https://en.wikipedia.org/wiki/Rust_(programming_language)".into(),
+                },
+            ],
+            Some(&crate::wiki::WikiSummary {
+                title: "Navier–Stokes equations".into(),
+                extract: "The Navier–Stokes equations describe the motion of viscous fluids."
+                    .into(),
+                url: "https://en.wikipedia.org/wiki/Navier%E2%80%93Stokes_equations".into(),
+            }),
+        );
+        app.wiki.set_result("navier strokes", md);
+
+        let mut terminal = ratatui::Terminal::new(TestBackend::new(100, 40)).unwrap();
+        terminal
+            .draw(|f| {
+                let area = ratatui::layout::Rect::new(0, 0, 100, 40);
+                crate::ui::buffer::draw(f, &mut app, area);
+            })
+            .unwrap();
+        app
+    }
+
+    #[test]
+    fn hit_link_finds_source_and_article_links_in_wiki() {
+        let app = app_rendered_wiki();
+        assert!(!app.link_layout.is_empty(), "expected link_layout populated");
+
+        // For each known link, click its first row at col just past the border
+        // and confirm the URL is recovered by the real hit_link mapping.
+        for lr in app.link_layout.clone() {
+            let local_row = lr.row0.saturating_sub(app.link_scroll_y);
+            let (ax, ay, aw, ah) = app.buffer_area;
+            let row = ay + local_row;
+            let col = ax + 1;
+            if row < ay || row >= ay + ah || col >= ax + aw {
+                continue; // off-screen at these coords; expected for scrolled-out rows
+            }
+            let hit = hit_link(&app, row, col);
+            assert_eq!(hit.as_deref(), Some(lr.url.as_str()), "click should hit {lr:?}");
+        }
+    }
+
+    #[test]
+    fn hit_link_returns_none_outside_links() {
+        let app = app_rendered_wiki();
+        let (ax, ay, aw, _ah) = app.buffer_area;
+        // Click the border column -> no link.
+        assert_eq!(hit_link(&app, ay + 1, ax), None);
+        // Click far outside the buffer -> no link.
+        assert_eq!(hit_link(&app, 0, 0), None);
+        // A col beyond the buffer width -> no link.
+        assert_eq!(hit_link(&app, ay + 1, ax + aw), None);
+    }
 }

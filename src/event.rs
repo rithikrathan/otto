@@ -14,6 +14,11 @@ pub enum AppEvent {
     MouseScroll {
         delta: i32,
     },
+    /// Mouse left-click at terminal coordinates `(row, col)`.
+    MouseClick {
+        row: u16,
+        col: u16,
+    },
 
     /// Periodic tick (drives the spinner animation).
     Tick,
@@ -42,18 +47,21 @@ pub enum AppEvent {
         eval_tokens: u64,
     },
 
-    /// Documentation search events.
-    SearchResultsLoaded {
+    /// DuckDuckGo Instant Answer result.
+    DdgResult {
         query: String,
-        results: Vec<crate::search::SearchResult>,
-    },
-    SearchDocumentLoaded {
-        url: String,
-        title: String,
         markdown: String,
-        from_cache: bool,
     },
-    SearchError {
+    DdgError {
+        msg: String,
+    },
+
+    /// Wikipedia quick-lookup result.
+    WikiResult {
+        query: String,
+        markdown: String,
+    },
+    WikiError {
         msg: String,
     },
 

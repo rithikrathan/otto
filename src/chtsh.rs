@@ -195,12 +195,17 @@ impl ChtShClient {
 }
 
 /// Fuzzy match query against a candidate list and return top N results.
+///
+/// Uses a process-wide cached `SkimMatcherV2` so we don't rebuild the (expensive)
+/// matcher on every keystroke — this was a source of input lag in the cht.sh buffer.
 pub fn fuzzy_suggest(candidates: &[String], input: &str, limit: usize) -> Vec<String> {
     if input.trim().is_empty() {
         return candidates.iter().take(limit).cloned().collect();
     }
 
-    let matcher = SkimMatcherV2::default();
+    static MATCHER: std::sync::OnceLock<SkimMatcherV2> = std::sync::OnceLock::new();
+    let matcher = MATCHER.get_or_init(SkimMatcherV2::default);
+
     let mut scored: Vec<(String, i64)> = candidates
         .iter()
         .filter_map(|c| matcher.fuzzy_match(c, input).map(|score| (c.clone(), score)))

@@ -214,7 +214,6 @@ fn draw_generic_modal(frame: &mut Frame, app: &App, win: Rect, theme: theme::The
 
     let (title, rows) = match modal {
         Modal::Settings => (" Settings ", app.modal_rows()),
-        Modal::SearchQueryPicker(_) => (" Select Search Query ", app.modal_rows()),
         Modal::Help => (" Keyboard Shortcuts & Help ", app.modal_rows()),
         _ => (" Modal ", app.modal_rows()),
     };
@@ -278,7 +277,6 @@ fn modal_height(app: &App, max_screen_height: u16) -> u16 {
         Some(Modal::ModelPicker) => (max_screen_height * 4 / 5).clamp(14, 24),
         Some(Modal::Help) => (max_screen_height * 4 / 5).clamp(16, 26),
         Some(Modal::Settings) => 12,
-        Some(Modal::SearchQueryPicker(opts)) => (opts.len() as u16 + 6).clamp(8, 20),
         None => 8,
     }
 }

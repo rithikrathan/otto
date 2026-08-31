@@ -87,10 +87,10 @@ fn draw_statusline(frame: &mut Frame, app: &App, area: Rect, theme: &theme::Them
 fn busy_label(job: &JobKind) -> &'static str {
     match job {
         JobKind::Chat => "thinking",
-        JobKind::SearchPlan => "planning search",
-        JobKind::SearchFetch => "searching",
         JobKind::ChtshPlan => "planning",
         JobKind::ChtshFetch => "fetching",
+        JobKind::DdgFetch => "searching",
+        JobKind::WikiFetch => "looking up",
         JobKind::Models => "loading models",
     }
 }
