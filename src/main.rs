@@ -67,9 +67,7 @@ async fn run(
     config: &mut config::Config,
     tx: EventSender,
 ) -> Result<()> {
-    use tokio::time::{interval, Duration};
-
-    let mut tick = interval(Duration::from_millis(80));
+    use tokio::time::Duration;
 
     app.init_from_config(config);
 
@@ -114,7 +112,7 @@ async fn run(
             let client = ollama::Ollama::new(prov, url, key);
             let connected = client.list_models().await.is_ok();
             let _ = tx_conn.send(AppEvent::ConnectionStatus(connected));
-            tokio::time::sleep(Duration::from_secs(4)).await;
+            tokio::time::sleep(Duration::from_secs(10)).await;
         }
     });
 
@@ -156,21 +154,34 @@ async fn run(
         }
         term.draw(|f| ui::draw(f, app))?;
 
-        tokio::select! {
-            _ = tick.tick() => {
-                app.tick = app.tick.wrapping_add(1);
-            }
-            ev = rx.recv() => {
-                match ev {
-                    Some(AppEvent::Input(key)) => {
-                        handle_key(app, key, &tx, config, &active_target)?;
-                    }
-
-                    Some(other) => {
-                        app.handle_event(other);
-                    }
-                    None => break,
+        if !app.busy.is_empty() {
+            // Animate spinner during active jobs
+            tokio::select! {
+                _ = tokio::time::sleep(Duration::from_millis(80)) => {
+                    app.tick = app.tick.wrapping_add(1);
                 }
+                ev = rx.recv() => {
+                    match ev {
+                        Some(AppEvent::Input(key)) => {
+                            handle_key(app, key, &tx, config, &active_target)?;
+                        }
+                        Some(other) => {
+                            app.handle_event(other);
+                        }
+                        None => break,
+                    }
+                }
+            }
+        } else {
+            // Purely event-driven when idle (0.0% CPU usage)
+            match rx.recv().await {
+                Some(AppEvent::Input(key)) => {
+                    handle_key(app, key, &tx, config, &active_target)?;
+                }
+                Some(other) => {
+                    app.handle_event(other);
+                }
+                None => break,
             }
         }
     }

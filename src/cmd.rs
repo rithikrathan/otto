@@ -123,4 +123,29 @@ mod tests {
         assert!(matches!(parse("/config"), Some(Command::Settings)));
         assert!(matches!(parse("/model"), Some(Command::Model(_))));
     }
+
+    #[test]
+    fn test_case_insensitive_and_whitespace_commands() {
+        assert!(matches!(parse("/CLEAR"), Some(Command::Clear)));
+        assert!(matches!(parse("/SETTINGS"), Some(Command::Settings)));
+        match parse("/MODEL    qwen2.5-coder-7b:latest   ") {
+            Some(Command::Model(m)) => assert_eq!(m, "qwen2.5-coder-7b:latest"),
+            _ => panic!("expected Model"),
+        }
+    }
+
+    #[test]
+    fn test_unknown_command_fallback() {
+        assert!(matches!(parse("/nonexistent_cmd"), Some(Command::Unknown(_))));
+    }
+
+    #[test]
+    fn test_autocomplete_edge_cases() {
+        assert_eq!(autocomplete(""), None);
+        assert_eq!(autocomplete("hello"), None);
+        assert_eq!(autocomplete("/"), Some("clear"));
+        assert_eq!(autocomplete("/set"), Some("tings"));
+        assert_eq!(autocomplete("/mod"), Some("el"));
+        assert_eq!(autocomplete("/model "), None); // whitespace returns None
+    }
 }

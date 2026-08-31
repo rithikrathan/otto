@@ -867,6 +867,56 @@ mod tests {
         app.modal_apply();
         assert_eq!(app.modal, Some(Modal::ModelPicker));
     }
+
+    #[test]
+    fn test_unicode_prompt_editing() {
+        let mut p = input::Prompt::new();
+        p.insert_char('🦀');
+        p.insert_char(' ');
+        p.insert_char('文');
+        p.insert_char('字');
+        assert_eq!(p.value(), "🦀 文字");
+
+        // Backspace removes multi-byte char cleanly
+        p.delete_backward();
+        assert_eq!(p.value(), "🦀 文");
+        p.delete_backward();
+        assert_eq!(p.value(), "🦀 ");
+        p.delete_backward();
+        assert_eq!(p.value(), "🦀");
+        p.delete_backward();
+        assert_eq!(p.value(), "");
+        p.delete_backward(); // on empty string does not panic
+        assert_eq!(p.value(), "");
+    }
+
+    #[test]
+    fn test_search_special_characters_no_panic() {
+        let mut app = App::new();
+        app.provider_models.insert("ollama".into(), vec!["qwen2.5-coder-7b:latest".into()]);
+        
+        for special in &["[", "]", "(", ")", "*", "+", "?", "\\", "^", "$", ".", "{", "}"] {
+            app.modal_search = special.to_string();
+            let _ = app.filtered_models_with_provider();
+        }
+    }
+
+    #[test]
+    fn test_empty_provider_modal_safety() {
+        let mut app = App::new();
+        app.provider_list = vec!["empty_prov".into()];
+        app.provider_index = 0;
+        app.provider_models.clear(); // no models
+
+        app.open_modal(Modal::ModelPicker);
+        app.modal_move(false);
+        app.modal_move(true);
+        // Apply on empty list closes modal safely without modifying model_name
+        let initial_model = app.model_name.clone();
+        app.modal_apply();
+        assert_eq!(app.model_name, initial_model);
+        assert_eq!(app.modal, None);
+    }
 }
 
 pub mod input {
