@@ -153,6 +153,9 @@ impl Ollama {
             let mut req = client.get(&models_url);
             if let Some(ref k) = self.api_key {
                 req = req.header("Authorization", format!("Bearer {k}"));
+                if self.provider == "gemini" || self.url.contains("googleapis.com") {
+                    req = req.header("x-goog-api-key", k);
+                }
             }
 
             if let Ok(resp) = req.send().await {
@@ -319,6 +322,9 @@ impl Ollama {
 
         if let Some(ref key) = self.api_key {
             req = req.header("Authorization", format!("Bearer {key}"));
+            if self.provider == "gemini" || self.url.contains("googleapis.com") {
+                req = req.header("x-goog-api-key", key);
+            }
         }
 
         let resp = req.send().await?;

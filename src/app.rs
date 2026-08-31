@@ -260,12 +260,14 @@ impl App {
             }
             AppEvent::ModelsLoaded(models) => {
                 if !models.is_empty() {
-                    self.provider_models.insert(self.provider_name.clone(), models.clone());
-                    self.models = models;
-                }
-                if self.model_name.is_empty() {
-                    if let Some(first) = self.models.first() {
-                        self.model_name = first.clone();
+                    self.provider_models.insert("ollama".into(), models.clone());
+                    if self.provider_name == "ollama" {
+                        self.models = models;
+                        if self.model_name.is_empty() {
+                            if let Some(first) = self.models.first() {
+                                self.model_name = first.clone();
+                            }
+                        }
                     }
                 }
                 self.remove_job(JobKind::Models);
@@ -273,10 +275,16 @@ impl App {
             AppEvent::ProviderModelsLoaded { provider, models } => {
                 if !models.is_empty() {
                     self.provider_models.insert(provider.clone(), models.clone());
-                    if self.active_provider_tab() == provider || self.provider_name == provider {
-                        self.models = self.provider_models.get(&self.provider_name).cloned().unwrap_or(models);
+                    if self.provider_name == provider {
+                        self.models = models.clone();
+                        if self.model_name.is_empty() {
+                            if let Some(first) = models.first() {
+                                self.model_name = first.clone();
+                            }
+                        }
                     }
                 }
+                self.remove_job(JobKind::Models);
             }
             AppEvent::SearchResultsLoaded { query, results } => {
                 self.search.set_results(&query, results);
@@ -402,7 +410,16 @@ impl App {
         self.modal = Some(modal);
         self.modal_search.clear();
         self.modal_search_focused = false;
-        self.modal_index = 0;
+        if let Some(pos) = self.provider_list.iter().position(|p| p == &self.provider_name) {
+            self.provider_index = pos;
+        }
+        let p = self.active_provider_tab().to_string();
+        let list = self.provider_models.get(&p).cloned().unwrap_or_default();
+        if let Some(pos) = list.iter().position(|m| m == &self.model_name) {
+            self.modal_index = pos;
+        } else {
+            self.modal_index = 0;
+        }
     }
 
     /// Close the currently-open floating window.
@@ -916,6 +933,34 @@ mod tests {
         app.modal_apply();
         assert_eq!(app.model_name, initial_model);
         assert_eq!(app.modal, None);
+    }
+
+    #[test]
+    fn test_provider_model_isolation() {
+        let mut app = App::new();
+        app.provider_list = vec!["ollama".into(), "gemini".into(), "groq".into()];
+        app.provider_index = 0;
+        app.provider_name = "ollama".into();
+
+        // Load ollama models
+        app.handle_event(AppEvent::ProviderModelsLoaded {
+            provider: "ollama".into(),
+            models: vec!["qwen2.5-coder-1.5b:latest".into(), "llama3.2:latest".into()],
+        });
+
+        // Load gemini models
+        app.handle_event(AppEvent::ProviderModelsLoaded {
+            provider: "gemini".into(),
+            models: vec!["gemini-2.0-flash".into(), "gemini-1.5-pro".into()],
+        });
+
+        // Verify isolation
+        let ollama_models = app.provider_models.get("ollama").unwrap();
+        let gemini_models = app.provider_models.get("gemini").unwrap();
+
+        assert_eq!(ollama_models, &vec!["qwen2.5-coder-1.5b:latest".to_string(), "llama3.2:latest".to_string()]);
+        assert_eq!(gemini_models, &vec!["gemini-2.0-flash".to_string(), "gemini-1.5-pro".to_string()]);
+        assert_ne!(ollama_models, gemini_models);
     }
 }
 
