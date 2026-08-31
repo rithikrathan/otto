@@ -8,7 +8,7 @@ use ratatui::Frame;
 use super::theme;
 
 /// Assemble the active buffer's blocks into a single markdown document.
-fn active_document(app: &App) -> String {
+pub fn active_document(app: &App) -> String {
     let mut doc = String::new();
 
     let push_block = |doc: &mut String, prefix: Option<&str>, markdown: &str, suffix: &str| {

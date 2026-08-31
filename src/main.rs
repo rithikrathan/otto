@@ -230,6 +230,11 @@ fn handle_key(
             app.running = false;
             return Ok(());
         }
+        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            // Ctrl+S saves the full active buffer as a markdown file.
+            save_buffer_markdown(app);
+            return Ok(());
+        }
         // A floating window has focus: route keys to it.
         _ if app.modal.is_some() => {
             return handle_modal_key(app, key, tx, config, active_target);
@@ -1002,6 +1007,53 @@ fn export_chat(app: &App, path: &str) -> Result<()> {
     Ok(())
 }
 
+/// Directory where Ctrl+S saves the active buffer's markdown.
+const SAVE_DIR: &str = "/mnt/sda4/otto";
+
+/// Date+time stamp as digits with no symbols (e.g. `20260831230215`), used to
+/// name saved markdown files.
+fn save_stamp() -> String {
+    chrono::Utc::now().format("%Y%m%d%H%M%S").to_string()
+}
+
+/// Save the full content of the active buffer (chat, ddg, chtsh, wiki) as a
+/// markdown file whose name is the current date+time as digits with no
+/// symbols (e.g. `20260831230215.md`). Pushes a status block into the buffer.
+fn save_buffer_markdown(app: &mut App) {
+    let dir = std::path::Path::new(SAVE_DIR);
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        push_status_block(app, &format!("Save failed: can't create {SAVE_DIR}: {e}"));
+        return;
+    }
+
+    let path = dir.join(format!("{}.md", save_stamp()));
+    let md = crate::ui::buffer::active_document(app);
+    match std::fs::write(&path, md) {
+        Ok(()) => push_status_block(app, &format!("Saved buffer to {}", path.display())),
+        Err(e) => push_status_block(app, &format!("Save failed: {e}")),
+    }
+}
+
+/// Append a status message block to the active buffer and scroll to it.
+fn push_status_block(app: &mut App, msg: &str) {
+    let block = crate::buffers::Block {
+        kind: "info".to_string(),
+        markdown: format!("*{msg}*"),
+    };
+    match app.active_buffer() {
+        crate::buffers::BufferId::Chat => app.chat.view.blocks.push(block),
+        crate::buffers::BufferId::Ddg => app.ddg.view.blocks.push(block),
+        crate::buffers::BufferId::Chtsh => app.chtsh.view.blocks.push(block),
+        crate::buffers::BufferId::Wiki => app.wiki.view.blocks.push(block),
+    }
+    match app.active_buffer() {
+        crate::buffers::BufferId::Chat => app.chat.view.scroll = 9999,
+        crate::buffers::BufferId::Ddg => app.ddg.view.scroll = 9999,
+        crate::buffers::BufferId::Chtsh => app.chtsh.view.scroll = 9999,
+        crate::buffers::BufferId::Wiki => app.wiki.view.scroll = 9999,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1078,5 +1130,46 @@ mod tests {
         assert_eq!(hit_link(&app, 0, 0), None);
         // A col beyond the buffer width -> no link.
         assert_eq!(hit_link(&app, ay + 1, ax + aw), None);
+    }
+
+    #[test]
+    fn save_stamp_is_digits_only_without_symbols() {
+        let stamp = save_stamp();
+        // 14 digits: YYYYMMDDHHMMSS.
+        assert_eq!(stamp.len(), 14, "stamp was {stamp}");
+        assert!(stamp.chars().all(|c| c.is_ascii_digit()), "stamp had non-digits: {stamp}");
+    }
+
+    #[test]
+    #[ignore = "writes to /mnt/sda4/otto on disk"]
+    fn save_buffer_writes_digits_named_file() {
+        use crate::buffers::Block;
+        let mut app = App::new();
+        app.chat.view.blocks.push(Block {
+            kind: "user".into(),
+            markdown: "hello world".into(),
+        });
+        save_buffer_markdown(&mut app);
+
+        let dir = std::path::Path::new(SAVE_DIR);
+        let stamp = save_stamp();
+        let path = dir.join(format!("{stamp}.md"));
+        // The file written by the most recent save should exist and be digits-only.
+        let files: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .filter(|n| n.ends_with(".md"))
+            .collect();
+        assert!(!files.is_empty(), "no md files written");
+        let newest = files.iter().max();
+        let name = newest.expect("a md file");
+        let stem = name.trim_end_matches(".md");
+        assert!(stem.chars().all(|c| c.is_ascii_digit()), "name had non-digits: {name}");
+        assert!(path.exists() || files.iter().any(|f| f == &format!("{stamp}.md")));
+        // Clean up the files we just wrote.
+        for f in &files {
+            let _ = std::fs::remove_file(dir.join(f));
+        }
     }
 }
